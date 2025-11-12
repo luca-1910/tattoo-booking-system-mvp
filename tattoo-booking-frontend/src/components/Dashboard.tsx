@@ -14,19 +14,36 @@ import {
 import { StatsCard } from "./StatsCard";
 import { BookingCard } from "./BookingCard";
 import { Button } from "./ui/button";
-import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from "recharts";
+import {
+  BarChart,
+  Bar,
+  XAxis,
+  YAxis,
+  CartesianGrid,
+  Tooltip,
+  ResponsiveContainer,
+} from "recharts";
 import { toast } from "sonner";
 import { useRequireAdmin } from "@/hooks/useRequireAdmin"; // ✅ guard hook
-import { supabaseBrowser } from "@/lib/supabaseBrowserClient"; 
+import { supabaseBrowser } from "@/lib/supabaseBrowserClient";
 
-type FilterTab = "all" | "pending" | "approved" | "completed" | "rejected" | "cancelled" | "expired";
+type FilterTab =
+  | "all"
+  | "pending"
+  | "approved"
+  | "completed"
+  | "rejected"
+  | "cancelled"
+  | "expired";
 
 interface DashboardProps {
   onNavigate: (page: string) => void;
   onLogout: () => void;
 }
 
-const initialBookings = [/* ... your mock data unchanged ... */];
+const initialBookings = [
+  /* ... your mock data unchanged ... */
+];
 
 const chartData = [
   { month: "Jan", hoursWorked: 120, hoursAvailable: 160 },
@@ -73,19 +90,19 @@ export default function Dashboard({ onNavigate, onLogout }: DashboardProps) {
     toast.error("Booking rejected");
   };
 
-const handleLogout = async () => {
-  const supabase = supabaseBrowser();
+  const handleLogout = async () => {
+    const supabase = supabaseBrowser();
 
-  const { error } = await supabase.auth.signOut();
-  if (error) {
-    toast.error("Failed to log out. Please try again.");
-    return;
-  }
+    const { error } = await supabase.auth.signOut();
+    if (error) {
+      toast.error("Failed to log out. Please try again.");
+      return;
+    }
 
-  onLogout?.();
-  toast.success("Logged out successfully");
-  onNavigate("home");
-};
+    onLogout?.();
+    toast.success("Logged out successfully");
+    onNavigate("home");
+  };
 
   // ✅ guard AFTER hooks
   if (checking) return null;
@@ -143,10 +160,30 @@ const handleLogout = async () => {
       {/* Stats */}
       <div className="max-w-7xl mx-auto px-4 py-6 sm:py-8">
         <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4 mb-6 sm:mb-8">
-          <StatsCard title="Pending" value={stats.pending} icon={<Clock />} color="#f59e0b" />
-          <StatsCard title="Approved" value={stats.approved} icon={<CheckCircle />} color="#10b981" />
-          <StatsCard title="Rejected" value={stats.rejected} icon={<XCircle />} color="#ef4444" />
-          <StatsCard title="Completed" value={stats.completed} icon={<CheckCircle />} color="#3b82f6" />
+          <StatsCard
+            title="Pending"
+            value={stats.pending}
+            icon={<Clock />}
+            color="#f59e0b"
+          />
+          <StatsCard
+            title="Approved"
+            value={stats.approved}
+            icon={<CheckCircle />}
+            color="#10b981"
+          />
+          <StatsCard
+            title="Rejected"
+            value={stats.rejected}
+            icon={<XCircle />}
+            color="#ef4444"
+          />
+          <StatsCard
+            title="Completed"
+            value={stats.completed}
+            icon={<CheckCircle />}
+            color="#3b82f6"
+          />
         </div>
 
         {/* Chart */}
@@ -157,7 +194,10 @@ const handleLogout = async () => {
           </div>
           <ResponsiveContainer width="100%" height={250}>
             <BarChart data={chartData}>
-              <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.05)" />
+              <CartesianGrid
+                strokeDasharray="3 3"
+                stroke="rgba(255,255,255,0.05)"
+              />
               <XAxis dataKey="month" stroke="#a0a0a0" />
               <YAxis stroke="#a0a0a0" />
               <Tooltip
@@ -169,7 +209,11 @@ const handleLogout = async () => {
                 }}
               />
               <Bar dataKey="hoursWorked" fill="#a32020" radius={[4, 4, 0, 0]} />
-              <Bar dataKey="hoursAvailable" fill="#2a2a2a" radius={[4, 4, 0, 0]} />
+              <Bar
+                dataKey="hoursAvailable"
+                fill="#2a2a2a"
+                radius={[4, 4, 0, 0]}
+              />
             </BarChart>
           </ResponsiveContainer>
         </div>
@@ -224,7 +268,8 @@ const handleLogout = async () => {
                 <AlertCircle className="w-12 h-12 mx-auto mb-4 text-[#a0a0a0]" />
                 <h3 className="mb-2 text-[#e5e5e5]">No bookings found</h3>
                 <p className="text-[#a0a0a0]">
-                  There are no {activeFilter !== "all" && activeFilter} bookings at the moment.
+                  There are no {activeFilter !== "all" && activeFilter} bookings
+                  at the moment.
                 </p>
               </div>
             )}
