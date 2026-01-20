@@ -14,83 +14,56 @@ import { toast } from "sonner";
 export default function SettingsPage() {
   const checking = useRequireAdmin();
   const supabase = supabaseBrowser();
+  
 
-  // NEW: keep artist_id we’ll key settings by
+  // Artist state
   const [artistId, setArtistId] = useState<string | null>(null);
-
-  // we don’t actually need settingsId anymore when keying by artist_id, but keep it harmlessly
-  const [settingsId, setSettingsId] = useState<number | null>(null);
-
   const [artistName, setArtistName] = useState("");
   const [calendarId, setCalendarId] = useState("");
   const [googleCalendarSyncEnabled, setGoogleCalendarSyncEnabled] = useState(false);
 
+  // UI state
   const [authEmail, setAuthEmail] = useState("");
-  const [notifications, setNotifications] = useState({
-    emailNotifications: true,
-    pushNotifications: false,
-    bookingReminders: true,
-    marketingEmails: false,
-  });
   const [appearance, setAppearance] = useState({ darkMode: true });
-
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
 
   useEffect(() => {
     if (checking) return;
+    
 
     const fetchData = async () => {
       try {
         setLoading(true);
 
-        // show auth email for display
+        // Auth email (display only)
         const { data: userRes } = await supabase.auth.getUser();
-        if (userRes?.user?.email) setAuthEmail(userRes.user.email);
+        if (userRes?.user?.email) {
+          setAuthEmail(userRes.user.email);
+        }
 
-        // 1) fetch the single artist_id from core table
-        const { data: artistRow, error: artistErr } = await supabase
-          .schema("artist_core")
+        // Fetch single artist (source of truth)
+        const { data: artist, error } = await supabase
           .from("tattoo_artist")
-          .select("artist_id")
+          .select("artist_id, name, calendar_id, google_calendar_sync_enabled")
           .limit(1)
           .maybeSingle();
 
-        if (artistErr) {
-          toast.error(artistErr.message);
-          return;
-        }
-        if (!artistRow?.artist_id) {
-          toast.error("No artist found in artist_core.tattoo_artist.");
-          return;
-        }
-        const id = artistRow.artist_id as string;
-        setArtistId(id);
-
-        // 2) load settings for that artist_id
-        const { data: settings, error: settingsErr } = await supabase
-          .from("artist_settings")
-          .select("*")
-          .eq("artist_id", id)
-          .maybeSingle();
-
-        if (settingsErr) {
-          toast.error(settingsErr.message);
+        if (error) {
+          toast.error(error.message);
           return;
         }
 
-        if (settings) {
-          setSettingsId((settings as any).id ?? null);
-          setArtistName(settings.name ?? "");
-          setCalendarId(settings.calendar_id ?? "");
-          setGoogleCalendarSyncEnabled(Boolean(settings.google_calendar_sync_enabled));
-        } else {
-          // no row yet—leave UI empty, we’ll upsert on save
-          setSettingsId(null);
-          setArtistName("");
-          setCalendarId("");
-          setGoogleCalendarSyncEnabled(false);
+        if (!artist?.artist_id) {
+          toast.error("No artist found in tattoo_artist.");
+          return;
         }
+
+        // Hydrate state
+        setArtistId(artist.artist_id);
+        setArtistName(artist.name ?? "");
+        setCalendarId(artist.calendar_id ?? "");
+        setGoogleCalendarSyncEnabled(Boolean(artist.google_calendar_sync_enabled));
       } finally {
         setLoading(false);
       }
@@ -104,23 +77,21 @@ export default function SettingsPage() {
       toast.error("Artist not loaded yet.");
       return;
     }
+
     try {
       setSaving(true);
 
-      // Upsert keyed by artist_id so we always maintain a single row per artist
       const { error } = await supabase
-        .from("artist_settings")
+        .from("tattoo_artist")
         .upsert(
           {
-            artist_id: artistId, // ← REQUIRED
+            artist_id: artistId, // PK
             name: artistName,
             calendar_id: calendarId,
             google_calendar_sync_enabled: googleCalendarSyncEnabled,
           },
           { onConflict: "artist_id" }
-        )
-        .select()
-        .maybeSingle();
+        );
 
       if (error) throw error;
 
@@ -138,7 +109,11 @@ export default function SettingsPage() {
     <div className="min-h-screen bg-[#0a0a0a] text-[#e5e5e5] py-8 px-4">
       <div className="max-w-4xl mx-auto">
         <div className="mb-8">
-          <Button variant="ghost" onClick={() => history.back()} className="mb-4 text-[#e5e5e5] hover:text-[#a32020]">
+          <Button
+            variant="ghost"
+            onClick={() => history.back()}
+            className="mb-4 text-[#e5e5e5] hover:text-[#a32020]"
+          >
             <ArrowLeft className="w-4 h-4 mr-2" />
             Back
           </Button>
@@ -180,12 +155,14 @@ export default function SettingsPage() {
                   />
                 </div>
 
-                <div className="flex gap-3 pt-2">
-                  <Button onClick={handleSave} disabled={saving} className="bg-[#a32020] hover:bg-[#8a1b1b] text-white">
-                    <Save className="w-4 h-4 mr-2" />
-                    {saving ? "Saving…" : "Save Profile"}
-                  </Button>
-                </div>
+                <Button
+                  onClick={handleSave}
+                  disabled={saving}
+                  className="bg-[#a32020] hover:bg-[#8a1b1b] text-white"
+                >
+                  <Save className="w-4 h-4 mr-2" />
+                  {saving ? "Saving…" : "Save Profile"}
+                </Button>
               </div>
             </div>
 
@@ -213,49 +190,25 @@ export default function SettingsPage() {
                 <div className="flex items-center justify-between p-4 bg-[#0a0a0a] rounded-lg">
                   <div>
                     <p className="text-[#e5e5e5]">Enable Google Calendar Sync</p>
-                    <p className="text-[#a0a0a0]">When enabled, approved bookings are pushed to your calendar.</p>
+                    <p className="text-[#a0a0a0]">
+                      When enabled, approved bookings are pushed to your calendar.
+                    </p>
                   </div>
-                  <Switch checked={googleCalendarSyncEnabled} onCheckedChange={setGoogleCalendarSyncEnabled} />
+                  <Switch
+                    checked={googleCalendarSyncEnabled}
+                    onCheckedChange={setGoogleCalendarSyncEnabled}
+                  />
                 </div>
 
-                <Button onClick={handleSave} disabled={saving} className="bg-[#a32020] hover:bg-[#8a1b1b] text-white">
+                <Button
+                  onClick={handleSave}
+                  disabled={saving}
+                  className="bg-[#a32020] hover:bg-[#8a1b1b] text-white"
+                >
                   <Save className="w-4 h-4 mr-2" />
                   {saving ? "Saving…" : "Save Calendar Settings"}
                 </Button>
               </div>
-            </div>
-
-            {/* Notifications (UI only) */}
-            <div className="bg-[#1a1a1a] rounded-lg p-6 border border-[rgba(255,255,255,0.1)]">
-              <div className="flex items-center gap-3 mb-6">
-                <div className="w-10 h-10 bg-[#a32020]/10 rounded-lg flex items-center justify-center">
-                  <Bell className="w-5 h-5 text-[#a32020]" />
-                </div>
-                <h2 className="text-xl font-medium">Notifications</h2>
-              </div>
-
-              {[
-                ["Email Notifications", "Receive booking updates via email", "emailNotifications"],
-                ["Push Notifications", "Get instant alerts on your device", "pushNotifications"],
-                ["Booking Reminders", "Reminders for upcoming appointments", "bookingReminders"],
-                ["Marketing Emails", "Updates and promotional content", "marketingEmails"],
-              ].map(([title, subtitle, key]) => (
-                <div key={key} className="flex items-center justify-between p-4 bg-[#0a0a0a] rounded-lg mb-3">
-                  <div>
-                    <p className="text-[#e5e5e5]">{title}</p>
-                    <p className="text-[#a0a0a0]">{subtitle}</p>
-                  </div>
-                  <Switch
-                    checked={notifications[key as keyof typeof notifications]}
-                    onCheckedChange={() =>
-                      setNotifications((prev) => ({
-                        ...prev,
-                        [key]: !prev[key as keyof typeof notifications],
-                      }))
-                    }
-                  />
-                </div>
-              ))}
             </div>
 
             {/* Appearance (UI only) */}
@@ -274,13 +227,19 @@ export default function SettingsPage() {
                 </div>
                 <Switch
                   checked={appearance.darkMode}
-                  onCheckedChange={() => setAppearance((p) => ({ ...p, darkMode: !p.darkMode }))}
+                  onCheckedChange={() =>
+                    setAppearance((p) => ({ ...p, darkMode: !p.darkMode }))
+                  }
                 />
               </div>
             </div>
 
             <div className="flex justify-end">
-              <Button onClick={handleSave} disabled={saving} className="bg-[#a32020] hover:bg-[#8a1b1b] text-white">
+              <Button
+                onClick={handleSave}
+                disabled={saving}
+                className="bg-[#a32020] hover:bg-[#8a1b1b] text-white"
+              >
                 <Save className="w-4 h-4 mr-2" />
                 {saving ? "Saving…" : "Save Changes"}
               </Button>
