@@ -1,6 +1,7 @@
+/* eslint-disable @typescript-eslint/no-explicit-any */
 "use client";
 
-import { useState, useMemo } from "react";
+import { useState, useMemo, useEffect } from "react";
 import {
   Clock,
   CheckCircle,
@@ -41,9 +42,71 @@ interface DashboardProps {
   onLogout: () => void;
 }
 
-const initialBookings = [
-  /* ... your mock data unchanged ... */
-];
+/**
+ * This type matches what your BookingCard expects (based on your existing dashboard UI).
+ * If your BookingCard expects slightly different names, keep the UI the same and adjust mapping below.
+ */
+type BookingUI = {
+  id: any; // booking_request primary key (number/uuid). keep flexible.
+  clientName: string;
+  email: string;
+  phone: string;
+  tattooIdea: string;
+  date: string; // display label
+  time: string; // display label
+  status:
+    | "pending"
+    | "approved"
+    | "completed"
+    | "rejected"
+    | "cancelled"
+    | "expired";
+  hasImages: boolean;
+  imageCount?: number;
+  paymentProofUrl?: string | null;
+  referenceImageUrl?: string | null;
+
+  // needed for approve -> book slot
+  requestedSlotId: string | null;
+};
+
+type BookingRequestRow = {
+  request_id: any;
+  name: string | null;
+  email: string | null;
+  phone: string | null;
+  tattoo_idea: string | null;
+  status: string | null;
+  reference_image_url: string | null;
+  payment_proof_url: string | null;
+  requested_slot_id: string | null;
+  created_at?: string | null;
+};
+
+type SlotRow = {
+  slot_id: string;
+  start_time: string;
+  end_time: string;
+  status: string | null;
+};
+
+function formatDateLabel(iso: string) {
+  const d = new Date(iso);
+  return d.toLocaleDateString(undefined, {
+    weekday: "short",
+    day: "2-digit",
+    month: "short",
+    year: "numeric",
+  });
+}
+
+function formatTimeLabel(iso: string) {
+  const d = new Date(iso);
+  return d.toLocaleTimeString(undefined, {
+    hour: "2-digit",
+    minute: "2-digit",
+  });
+}
 
 const chartData = [
   { month: "Jan", hoursWorked: 120, hoursAvailable: 160 },
@@ -55,10 +118,107 @@ const chartData = [
 ];
 
 export default function Dashboard({ onNavigate, onLogout }: DashboardProps) {
-  const checking = useRequireAdmin(); // ✅ ensure only admin sees it
-  const [bookings, setBookings] = useState(initialBookings);
+  const checking = useRequireAdmin();
+  const supabase = supabaseBrowser();
+
+  const [bookings, setBookings] = useState<BookingUI[]>([]);
+  const [loadingBookings, setLoadingBookings] = useState(true);
+
   const [activeFilter, setActiveFilter] = useState<FilterTab>("all");
 
+  // ─────────────────────────────────────────────────────────
+  // Fetch booking requests + their slot date/time
+  // ─────────────────────────────────────────────────────────
+  const fetchBookings = async () => {
+    try {
+      setLoadingBookings(true);
+
+      const { data: reqs, error: reqErr } = await supabase
+        .from("booking_request")
+        .select(
+          "request_id,name,email,phone,tattoo_idea,status,reference_image_url,payment_proof_url,requested_slot_id,created_at",
+        )
+        .order("created_at", { ascending: false })
+        .limit(200);
+
+      if (reqErr) throw reqErr;
+
+      const requests = (reqs ?? []) as BookingRequestRow[];
+
+      const slotIds = Array.from(
+        new Set(
+          requests
+            .map((r) => r.requested_slot_id)
+            .filter((x): x is string => Boolean(x)),
+        ),
+      );
+
+      const slotMap = new Map<string, SlotRow>();
+      if (slotIds.length > 0) {
+        const { data: slots, error: slotErr } = await supabase
+          .from("slot")
+          .select("slot_id,start_time,end_time,status")
+          .in("slot_id", slotIds);
+
+        if (slotErr) throw slotErr;
+
+        (slots ?? []).forEach((s: any) => {
+          slotMap.set(s.slot_id, s as SlotRow);
+        });
+      }
+
+      const mapped: BookingUI[] = requests.map((r) => {
+        const slot = r.requested_slot_id
+          ? slotMap.get(r.requested_slot_id)
+          : null;
+
+        // Normalize status to what your filters expect
+        const rawStatus = (r.status ?? "pending").toLowerCase();
+        const status: BookingUI["status"] =
+          rawStatus === "approved" ||
+          rawStatus === "completed" ||
+          rawStatus === "rejected" ||
+          rawStatus === "cancelled" ||
+          rawStatus === "expired"
+            ? (rawStatus as BookingUI["status"])
+            : "pending";
+
+        return {
+          id: r.request_id,
+          clientName: r.name ?? "Unknown",
+          email: r.email ?? "",
+          phone: r.phone ?? "",
+          tattooIdea: r.tattoo_idea ?? "",
+          date: slot?.start_time ? formatDateLabel(slot.start_time) : "TBD",
+          time: slot?.start_time ? formatTimeLabel(slot.start_time) : "TBD",
+          status,
+          hasImages: Boolean(r.reference_image_url),
+          imageCount: r.reference_image_url ? 1 : 0,
+          requestedSlotId: r.requested_slot_id ?? null,
+          paymentProofUrl: r.payment_proof_url ?? null,
+          referenceImageUrl: r.reference_image_url ?? null,
+        };
+      });
+
+      setBookings(mapped);
+    } catch (e: any) {
+      console.error("FETCH BOOKINGS ERROR:", e);
+      toast.error(e?.message || "Failed to load booking requests.");
+      setBookings([]);
+    } finally {
+      setLoadingBookings(false);
+    }
+  };
+
+  useEffect(() => {
+    if (checking) return;
+    fetchBookings();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [checking]);
+
+  // ─────────────────────────────────────────────────────────
+  // Filters + stats (same UI behavior)
+  // ─────────────────────────────────────────────────────────
   const filteredBookings = useMemo(() => {
     if (activeFilter === "all") return bookings;
     return bookings.filter((b) => b.status === activeFilter);
@@ -73,26 +233,92 @@ export default function Dashboard({ onNavigate, onLogout }: DashboardProps) {
       cancelled: bookings.filter((b) => b.status === "cancelled").length,
       expired: bookings.filter((b) => b.status === "expired").length,
     }),
-    [bookings]
+    [bookings],
   );
 
-  const handleApprove = (id: number) => {
-    setBookings((prev) =>
-      prev.map((b) => (b.id === id ? { ...b, status: "approved" as const } : b))
-    );
-    toast.success("Booking approved successfully");
+  // ─────────────────────────────────────────────────────────
+  // Approve / Reject
+  // ─────────────────────────────────────────────────────────
+  const handleApprove = async (id: any) => {
+    const booking = bookings.find((b) => b.id === id);
+    if (!booking) return;
+
+    if (!booking.requestedSlotId) {
+      toast.error("This request has no selected slot.");
+      return;
+    }
+
+    try {
+      // 1) Mark booking_request approved
+      const { error: reqErr } = await supabase
+        .from("booking_request")
+        .update({ status: "approved" })
+        .eq("request_id", id);
+
+      if (reqErr) throw reqErr;
+
+      // 2) Book the slot with a guard to prevent double booking.
+      // Try lowercase first (your current recommended model).
+      let updated = false;
+
+      const tryUpdate = async (availableValue: string, bookedValue: string) => {
+        const { data, error } = await supabase
+          .from("slot")
+          .update({ status: bookedValue })
+          .eq("slot_id", booking.requestedSlotId!)
+          .eq("status", availableValue)
+          .select("slot_id");
+
+        if (error) throw error;
+        if (data && data.length > 0) updated = true;
+      };
+
+      // Attempt both casing conventions (handles legacy rows safely)
+      await tryUpdate("available", "booked");
+      if (!updated) {
+        await tryUpdate("Available", "Booked");
+      }
+
+      if (!updated) {
+        toast.error("Slot was already booked (or not available).");
+        // Optionally revert booking_request to pending to keep consistency:
+        // await supabase.from("booking_request").update({ status: "pending" }).eq("id", id);
+        return;
+      }
+
+      toast.success("Booking approved and slot booked.");
+
+      // Update local state to reflect approval without a full refetch
+      setBookings((prev) =>
+        prev.map((b) => (b.id === id ? { ...b, status: "approved" } : b)),
+      );
+    } catch (e: any) {
+      console.error("APPROVE ERROR:", e);
+      toast.error(e?.message || "Failed to approve booking.");
+    }
   };
 
-  const handleReject = (id: number) => {
-    setBookings((prev) =>
-      prev.map((b) => (b.id === id ? { ...b, status: "rejected" as const } : b))
-    );
-    toast.error("Booking rejected");
+  const handleReject = async (id: any) => {
+    try {
+      const { error } = await supabase
+        .from("booking_request")
+        .update({ status: "rejected" })
+        .eq("request_id", id);
+
+      if (error) throw error;
+
+      toast.error("Booking rejected");
+
+      setBookings((prev) =>
+        prev.map((b) => (b.id === id ? { ...b, status: "rejected" } : b)),
+      );
+    } catch (e: any) {
+      console.error("REJECT ERROR:", e);
+      toast.error(e?.message || "Failed to reject booking.");
+    }
   };
 
   const handleLogout = async () => {
-    const supabase = supabaseBrowser();
-
     const { error } = await supabase.auth.signOut();
     if (error) {
       toast.error("Failed to log out. Please try again.");
@@ -186,7 +412,7 @@ export default function Dashboard({ onNavigate, onLogout }: DashboardProps) {
           />
         </div>
 
-        {/* Chart */}
+        {/* Chart (unchanged) */}
         <div className="bg-[#1a1a1a] rounded-lg p-4 sm:p-6 border border-[rgba(255,255,255,0.1)] mb-6 sm:mb-8 shadow-xl shadow-black/10">
           <div className="flex items-center gap-2 mb-4 sm:mb-6">
             <BarChart3 className="w-5 h-5 text-[#a32020]" />
@@ -220,13 +446,24 @@ export default function Dashboard({ onNavigate, onLogout }: DashboardProps) {
 
         {/* Booking List */}
         <div>
-          <h2 className="mb-4 sm:mb-6">Booking Requests</h2>
+          <div className="flex items-center justify-between mb-4 sm:mb-6">
+            <h2>Booking Requests</h2>
+
+            <Button
+              variant="ghost"
+              onClick={fetchBookings}
+              className="text-[#e5e5e5] hover:text-[#a32020] hover:bg-[#a32020]/10"
+            >
+              {loadingBookings ? "Refreshing…" : "Refresh"}
+            </Button>
+          </div>
+
           <div className="bg-[#1a1a1a] rounded-lg p-2 sm:p-4 border border-[rgba(255,255,255,0.1)] mb-6 shadow-xl shadow-black/10">
             <div className="flex overflow-x-auto gap-1 sm:gap-2 scrollbar-hide">
               {filterTabs.map((tab) => (
                 <button
                   key={tab.id}
-                  onClick={() => setActiveFilter(tab.id)}
+                  onClick={() => setActiveFilter(tab.id as FilterTab)}
                   className={`relative px-3 sm:px-4 py-2 sm:py-3 rounded-md whitespace-nowrap transition-all duration-300 ${
                     activeFilter === tab.id
                       ? "text-[#a32020]"
@@ -254,7 +491,11 @@ export default function Dashboard({ onNavigate, onLogout }: DashboardProps) {
           </div>
 
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-            {filteredBookings.length > 0 ? (
+            {loadingBookings ? (
+              <div className="col-span-full bg-[#1a1a1a] rounded-lg p-12 border border-[rgba(255,255,255,0.1)] text-center">
+                <p className="text-[#a0a0a0]">Loading booking requests…</p>
+              </div>
+            ) : filteredBookings.length > 0 ? (
               filteredBookings.map((booking) => (
                 <BookingCard
                   key={booking.id}
