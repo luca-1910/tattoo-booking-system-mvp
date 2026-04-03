@@ -4,6 +4,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { supabaseBrowser } from "@/lib/supabaseBrowserClient";
 import { useRequireAdmin } from "@/hooks/useRequireAdmin";
+import { type SlotStatus, normalizeSlotStatus } from "@/lib/domain";
 import { Button } from "./ui/button";
 import { Input } from "./ui/input";
 import { toast } from "sonner";
@@ -14,7 +15,7 @@ type Slot = {
   artist_id: string;
   start_time: string; // timestamptz
   end_time: string;   // timestamptz
-  status: string | null;
+  status: SlotStatus | null;
   created_at?: string;
   updated_at?: string;
 };
@@ -35,10 +36,9 @@ function getMonthMatrix(year: number, monthIndex0: number) {
   // monthIndex0: 0 = Jan
   const first = new Date(year, monthIndex0, 1);
   const firstDow = first.getDay(); // 0..6
-  const daysInMonth = new Date(year, monthIndex0 + 1, 0).getDate();
 
   const weeks: Date[][] = [];
-  let cur = new Date(year, monthIndex0, 1 - firstDow); // start from the Sunday of the first week
+  const cur = new Date(year, monthIndex0, 1 - firstDow); // start from the Sunday of the first week
 
   for (let w = 0; w < 6; w++) {
     const week: Date[] = [];
@@ -67,7 +67,6 @@ export default function CalendarPage() {
 
   const [artistId, setArtistId] = useState<string | null>(null);
   const [slots, setSlots] = useState<Slot[]>([]);
-  const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
 
   // view state (Figma-like)
@@ -91,38 +90,39 @@ export default function CalendarPage() {
     if (checking) return;
 
     (async () => {
-      try {
-        setLoading(true);
+      // You enabled this schema; use explicit schema selector for clarity.
+      const { data: artistRow, error: artistErr } = await supabase
+        .from("tattoo_artist")
+        .select("artist_id")
+        .limit(1)
+        .maybeSingle();
 
-        // You enabled this schema; use explicit schema selector for clarity.
-        const { data: artistRow, error: artistErr } = await supabase
-          .from("tattoo_artist")
-          .select("artist_id")
-          .limit(1)
-          .maybeSingle();
+      if (artistErr) {
+        toast.error(artistErr.message);
+        return;
+      }
+      if (!artistRow?.artist_id) {
+        toast.error("No artist found in tattoo_artist");
+        return;
+      }
 
-        if (artistErr) {
-          toast.error(artistErr.message);
-          return;
-        }
-        if (!artistRow?.artist_id) {
-          toast.error("No artist found in artist_core.tattoo_artist");
-          return;
-        }
+      setArtistId(artistRow.artist_id);
 
-        setArtistId(artistRow.artist_id);
+      // initial fetch
+      const { data: rows, error } = await supabase
+        .from("slot")
+        .select("*")
+        .eq("artist_id", artistRow.artist_id)
+        .order("start_time", { ascending: true });
 
-        // initial fetch
-        const { data: rows, error } = await supabase
-          .from("slot")
-          .select("*")
-          .eq("artist_id", artistRow.artist_id)
-          .order("start_time", { ascending: true });
-
-        if (error) toast.error(error.message);
-        else setSlots((rows as Slot[]) ?? []);
-      } finally {
-        setLoading(false);
+      if (error) toast.error(error.message);
+      else {
+        setSlots(
+          ((rows as Slot[]) ?? []).map((slot) => ({
+            ...slot,
+            status: normalizeSlotStatus(slot.status),
+          })),
+        );
       }
     })();
   }, [checking, supabase]);
@@ -170,7 +170,7 @@ export default function CalendarPage() {
         artist_id: artistId,
         start_time: stIso,
         end_time: enIso,
-        status: "open" as const, // availability slot
+        status: "available" as const,
         // notes not in schema; ignore for now
       };
 
@@ -207,17 +207,19 @@ export default function CalendarPage() {
 
   // status -> chip styles (matches your legend colors)
   function statusClasses(status?: string | null) {
-    switch ((status || "").toLowerCase()) {
-      case "approved":
+    switch (status) {
+      case "available":
         return "bg-green-700/80 text-green-50 border border-green-600";
-      case "rejected":
+      case "booked":
+        return "bg-yellow-700/80 text-yellow-50 border border-yellow-600";
+      case "blocked":
         return "bg-red-800/80 text-red-50 border border-red-700";
       case "completed":
         return "bg-blue-800/80 text-blue-50 border border-blue-700";
-      case "pending":
-        return "bg-yellow-700/80 text-yellow-50 border border-yellow-600";
+      case "cancelled":
+        return "bg-neutral-700/80 text-neutral-100 border border-neutral-600";
       default:
-        return "bg-neutral-800/80 text-neutral-200 border border-neutral-700"; // open availability
+        return "bg-neutral-800/80 text-neutral-200 border border-neutral-700";
     }
   }
 
@@ -310,10 +312,11 @@ export default function CalendarPage() {
           {/* Legend */}
           <div className="mt-6 grid grid-cols-2 sm:grid-cols-4 gap-4 text-sm">
             {[
-              ["Pending", "bg-yellow-700/80 border-yellow-600"],
-              ["Approved", "bg-green-700/80 border-green-600"],
-              ["Rejected", "bg-red-800/80 border-red-700"],
+              ["Available", "bg-green-700/80 border-green-600"],
+              ["Booked", "bg-yellow-700/80 border-yellow-600"],
+              ["Blocked", "bg-red-800/80 border-red-700"],
               ["Completed", "bg-blue-800/80 border-blue-700"],
+              ["Cancelled", "bg-neutral-700/80 border-neutral-600"],
             ].map(([label, cls]) => (
               <div key={label} className="flex items-center gap-2">
                 <span className={`inline-block w-3 h-3 rounded ${cls}`} />

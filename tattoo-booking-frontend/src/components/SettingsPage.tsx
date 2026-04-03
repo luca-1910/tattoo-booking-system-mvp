@@ -2,7 +2,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { ArrowLeft, User, Bell, Palette, Save, Calendar as CalendarIcon } from "lucide-react";
+import { ArrowLeft, User, Palette, Save, Calendar as CalendarIcon } from "lucide-react";
 import { useRequireAdmin } from "@/hooks/useRequireAdmin";
 import { supabaseBrowser } from "@/lib/supabaseBrowserClient";
 import { Button } from "./ui/button";

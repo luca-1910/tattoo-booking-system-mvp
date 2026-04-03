@@ -16,7 +16,8 @@ import { Label } from "./ui/label";
 import { Textarea } from "./ui/textarea";
 import { Calendar } from "./ui/calendar";
 import { toast } from "sonner";
-import { createClient } from "@supabase/supabase-js";
+import { type SlotStatus } from "@/lib/domain";
+import { supabaseBrowser } from "@/lib/supabaseBrowserClient";
 
 interface BookingPageProps {
   onNavigate: (page: string) => void;
@@ -25,10 +26,7 @@ interface BookingPageProps {
 /* ──────────────────────────────────────────────────────────
    Supabase client (PUBLIC schema only)
 ────────────────────────────────────────────────────────── */
-const supabase = createClient(
-  process.env.NEXT_PUBLIC_SUPABASE_URL!,
-  process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
-);
+const supabase = supabaseBrowser();
 
 /**
  * Uploads a file to a public bucket and returns a public URL.
@@ -56,7 +54,7 @@ type SlotRow = {
   slot_id: string;
   start_time: string; // ISO
   end_time: string; // ISO
-  status: "available" | "booked";
+  status: SlotStatus;
 };
 
 function formatTimeLabel(iso: string) {

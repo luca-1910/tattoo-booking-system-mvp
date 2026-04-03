@@ -2,6 +2,7 @@
 "use client";
 
 import { Check, X, Calendar, Image as ImageIcon, ExternalLink as ExternalLinkIcon } from "lucide-react";
+import { type BookingRequestStatus } from "@/lib/domain";
 import { Button } from "./ui/button";
 import { Badge } from "./ui/badge";
 import {
@@ -20,7 +21,7 @@ interface Booking {
   tattooIdea: string;
   date: string;
   time: string;
-  status: "pending" | "approved" | "rejected" | "completed" | "cancelled" | "expired";
+  status: BookingRequestStatus;
   hasImages: boolean;
   imageCount?: number;
 

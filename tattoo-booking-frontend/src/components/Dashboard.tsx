@@ -27,15 +27,14 @@ import {
 import { toast } from "sonner";
 import { useRequireAdmin } from "@/hooks/useRequireAdmin"; // ✅ guard hook
 import { supabaseBrowser } from "@/lib/supabaseBrowserClient";
+import {
+  type BookingRequestStatus,
+  type SlotStatus,
+  normalizeBookingRequestStatus,
+  normalizeSlotStatus,
+} from "@/lib/domain";
 
-type FilterTab =
-  | "all"
-  | "pending"
-  | "approved"
-  | "completed"
-  | "rejected"
-  | "cancelled"
-  | "expired";
+type FilterTab = "all" | BookingRequestStatus;
 
 interface DashboardProps {
   onNavigate: (page: string) => void;
@@ -54,13 +53,7 @@ type BookingUI = {
   tattooIdea: string;
   date: string; // display label
   time: string; // display label
-  status:
-    | "pending"
-    | "approved"
-    | "completed"
-    | "rejected"
-    | "cancelled"
-    | "expired";
+  status: BookingRequestStatus;
   hasImages: boolean;
   imageCount?: number;
   paymentProofUrl?: string | null;
@@ -76,7 +69,7 @@ type BookingRequestRow = {
   email: string | null;
   phone: string | null;
   tattoo_idea: string | null;
-  status: string | null;
+  status: BookingRequestStatus | string | null;
   reference_image_url: string | null;
   payment_proof_url: string | null;
   requested_slot_id: string | null;
@@ -87,7 +80,7 @@ type SlotRow = {
   slot_id: string;
   start_time: string;
   end_time: string;
-  status: string | null;
+  status: SlotStatus | null;
 };
 
 function formatDateLabel(iso: string) {
@@ -163,7 +156,10 @@ export default function Dashboard({ onNavigate, onLogout }: DashboardProps) {
         if (slotErr) throw slotErr;
 
         (slots ?? []).forEach((s: any) => {
-          slotMap.set(s.slot_id, s as SlotRow);
+          slotMap.set(s.slot_id, {
+            ...(s as SlotRow),
+            status: normalizeSlotStatus(s.status),
+          });
         });
       }
 
@@ -173,15 +169,7 @@ export default function Dashboard({ onNavigate, onLogout }: DashboardProps) {
           : null;
 
         // Normalize status to what your filters expect
-        const rawStatus = (r.status ?? "pending").toLowerCase();
-        const status: BookingUI["status"] =
-          rawStatus === "approved" ||
-          rawStatus === "completed" ||
-          rawStatus === "rejected" ||
-          rawStatus === "cancelled" ||
-          rawStatus === "expired"
-            ? (rawStatus as BookingUI["status"])
-            : "pending";
+        const status = normalizeBookingRequestStatus(r.status);
 
         return {
           id: r.request_id,
