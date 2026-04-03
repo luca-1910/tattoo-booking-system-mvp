@@ -266,12 +266,13 @@ export default function Dashboard({ onNavigate, onLogout }: DashboardProps) {
 
   const handleReject = async (id: any) => {
     try {
-      const { error } = await supabase
-        .from("booking_request")
-        .update({ status: "rejected" })
-        .eq("request_id", id);
-
-      if (error) throw error;
+      const res = await fetch(`/api/admin/bookings/${id}/reject`, {
+        method: "POST",
+      });
+      const payload = await res.json();
+      if (!res.ok) {
+        throw new Error(payload?.error || "Failed to reject booking.");
+      }
 
       toast.error("Booking rejected");
 

@@ -89,6 +89,24 @@ export async function POST(_req: NextRequest, ctx: RouteContext) {
     );
   }
 
+  const { data: bookedRows, error: slotUpdateError } = await supabase
+    .from("slot")
+    .update({ status: "booked" })
+    .eq("slot_id", slot.slot_id)
+    .eq("status", "available")
+    .select("slot_id");
+
+  if (slotUpdateError) {
+    return NextResponse.json({ error: slotUpdateError.message }, { status: 400 });
+  }
+
+  if (!bookedRows || bookedRows.length === 0) {
+    return NextResponse.json(
+      { error: "Slot is no longer available." },
+      { status: 409 },
+    );
+  }
+
   const approvalTimestamp = new Date().toISOString();
 
   const { error: bookingApproveError } = await supabase
@@ -105,27 +123,8 @@ export async function POST(_req: NextRequest, ctx: RouteContext) {
     .eq("request_id", requestId);
 
   if (bookingApproveError) {
+    await supabase.from("slot").update({ status: "available" }).eq("slot_id", slot.slot_id);
     return NextResponse.json({ error: bookingApproveError.message }, { status: 400 });
-  }
-
-  const { data: bookedRows, error: slotUpdateError } = await supabase
-    .from("slot")
-    .update({ status: "booked" })
-    .eq("slot_id", slot.slot_id)
-    .eq("status", "available")
-    .select("slot_id");
-
-  if (slotUpdateError) {
-    await rollbackBookingStatus(supabase, requestId);
-    return NextResponse.json({ error: slotUpdateError.message }, { status: 400 });
-  }
-
-  if (!bookedRows || bookedRows.length === 0) {
-    await rollbackBookingStatus(supabase, requestId);
-    return NextResponse.json(
-      { error: "Slot is no longer available." },
-      { status: 409 },
-    );
   }
 
   const syncResult = await syncBookingToCalendar({
@@ -144,23 +143,6 @@ export async function POST(_req: NextRequest, ctx: RouteContext) {
     calendarEventId: syncResult.eventId ?? null,
     calendarSyncError: syncResult.error ?? null,
   });
-}
-
-async function rollbackBookingStatus(
-  supabase: SupabaseServerClient,
-  requestId: string,
-) {
-  await supabase
-    .from("booking_request")
-    .update({
-      status: "pending",
-      google_calendar_sync_status: null,
-      google_calendar_sync_error: null,
-      google_calendar_event_id: null,
-      google_calendar_last_attempt_at: null,
-      google_calendar_synced_at: null,
-    })
-    .eq("request_id", requestId);
 }
 
 async function syncBookingToCalendar({
