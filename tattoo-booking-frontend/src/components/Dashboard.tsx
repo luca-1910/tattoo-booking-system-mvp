@@ -237,44 +237,22 @@ export default function Dashboard({ onNavigate, onLogout }: DashboardProps) {
     }
 
     try {
-      // 1) Mark booking_request approved
-      const { error: reqErr } = await supabase
-        .from("booking_request")
-        .update({ status: "approved" })
-        .eq("request_id", id);
+      const res = await fetch(`/api/admin/bookings/${id}/approve`, {
+        method: "POST",
+      });
 
-      if (reqErr) throw reqErr;
-
-      // 2) Book the slot with a guard to prevent double booking.
-      // Try lowercase first (your current recommended model).
-      let updated = false;
-
-      const tryUpdate = async (availableValue: string, bookedValue: string) => {
-        const { data, error } = await supabase
-          .from("slot")
-          .update({ status: bookedValue })
-          .eq("slot_id", booking.requestedSlotId!)
-          .eq("status", availableValue)
-          .select("slot_id");
-
-        if (error) throw error;
-        if (data && data.length > 0) updated = true;
-      };
-
-      // Attempt both casing conventions (handles legacy rows safely)
-      await tryUpdate("available", "booked");
-      if (!updated) {
-        await tryUpdate("Available", "Booked");
+      const payload = await res.json();
+      if (!res.ok) {
+        throw new Error(payload?.error || "Failed to approve booking.");
       }
 
-      if (!updated) {
-        toast.error("Slot was already booked (or not available).");
-        // Optionally revert booking_request to pending to keep consistency:
-        // await supabase.from("booking_request").update({ status: "pending" }).eq("id", id);
-        return;
+      if (payload.calendarSyncStatus === "synced") {
+        toast.success("Booking approved, slot booked, and synced to Google Calendar.");
+      } else if (payload.calendarSyncStatus === "skipped") {
+        toast.success("Booking approved and slot booked. Calendar sync was skipped.");
+      } else {
+        toast.success("Booking approved and slot booked. Calendar sync failed (retry later).");
       }
-
-      toast.success("Booking approved and slot booked.");
 
       // Update local state to reflect approval without a full refetch
       setBookings((prev) =>

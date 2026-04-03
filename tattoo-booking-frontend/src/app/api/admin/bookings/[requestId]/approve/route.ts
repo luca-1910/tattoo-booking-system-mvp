@@ -1,0 +1,272 @@
+import { NextRequest, NextResponse } from "next/server";
+import { isConfiguredAdmin } from "@/lib/adminAuth";
+import {
+  APP_CALENDAR_SOURCE,
+  createGoogleCalendarEvent,
+  type CalendarSyncStatus,
+} from "@/lib/googleCalendar";
+import { normalizeSlotStatus } from "@/lib/domain";
+import { supabaseServer } from "@/lib/supabaseServerClient";
+
+type RouteContext = {
+  params: Promise<{
+    requestId: string;
+  }>;
+};
+
+type BookingApprovalRow = {
+  request_id: string | number;
+  status: string | null;
+  requested_slot_id: string | null;
+  name: string | null;
+  email: string | null;
+  phone: string | null;
+  tattoo_idea: string | null;
+};
+
+type SlotRow = {
+  slot_id: string;
+  status: string | null;
+  start_time: string;
+  end_time: string;
+};
+
+export async function POST(_req: NextRequest, ctx: RouteContext) {
+  const supabase = supabaseServer();
+  const { requestId } = await ctx.params;
+
+  const {
+    data: { user },
+    error: userError,
+  } = await supabase.auth.getUser();
+
+  if (userError || !isConfiguredAdmin(user)) {
+    return NextResponse.json({ error: "Unauthorized" }, { status: 403 });
+  }
+
+  const { data: booking, error: bookingError } = await supabase
+    .from("booking_request")
+    .select("request_id,status,requested_slot_id,name,email,phone,tattoo_idea")
+    .eq("request_id", requestId)
+    .maybeSingle<BookingApprovalRow>();
+
+  if (bookingError) {
+    return NextResponse.json({ error: bookingError.message }, { status: 400 });
+  }
+
+  if (!booking) {
+    return NextResponse.json({ error: "Booking request not found." }, { status: 404 });
+  }
+
+  if (!booking.requested_slot_id) {
+    return NextResponse.json(
+      { error: "Booking request has no selected slot." },
+      { status: 400 },
+    );
+  }
+
+  const { data: slot, error: slotFetchError } = await supabase
+    .from("slot")
+    .select("slot_id,status,start_time,end_time")
+    .eq("slot_id", booking.requested_slot_id)
+    .maybeSingle<SlotRow>();
+
+  if (slotFetchError) {
+    return NextResponse.json({ error: slotFetchError.message }, { status: 400 });
+  }
+
+  if (!slot) {
+    return NextResponse.json({ error: "Requested slot not found." }, { status: 404 });
+  }
+
+  const normalizedSlotStatus = normalizeSlotStatus(slot.status);
+  if (normalizedSlotStatus !== "available") {
+    return NextResponse.json(
+      { error: "Slot is no longer available.", slotStatus: normalizedSlotStatus },
+      { status: 409 },
+    );
+  }
+
+  const approvalTimestamp = new Date().toISOString();
+
+  const { error: bookingApproveError } = await supabase
+    .from("booking_request")
+    .update({
+      status: "approved",
+      google_calendar_sync_status: "pending",
+      google_calendar_sync_error: null,
+      google_calendar_event_id: null,
+      google_calendar_last_attempt_at: null,
+      google_calendar_synced_at: null,
+      google_calendar_event_origin: APP_CALENDAR_SOURCE,
+    })
+    .eq("request_id", requestId);
+
+  if (bookingApproveError) {
+    return NextResponse.json({ error: bookingApproveError.message }, { status: 400 });
+  }
+
+  const { data: bookedRows, error: slotUpdateError } = await supabase
+    .from("slot")
+    .update({ status: "booked" })
+    .eq("slot_id", slot.slot_id)
+    .eq("status", "available")
+    .select("slot_id");
+
+  if (slotUpdateError) {
+    await rollbackBookingStatus(supabase, requestId);
+    return NextResponse.json({ error: slotUpdateError.message }, { status: 400 });
+  }
+
+  if (!bookedRows || bookedRows.length === 0) {
+    await rollbackBookingStatus(supabase, requestId);
+    return NextResponse.json(
+      { error: "Slot is no longer available." },
+      { status: 409 },
+    );
+  }
+
+  const syncResult = await syncBookingToCalendar({
+    supabase,
+    booking,
+    slot,
+    requestId,
+    attemptAt: approvalTimestamp,
+  });
+
+  return NextResponse.json({
+    ok: true,
+    bookingStatus: "approved",
+    slotStatus: "booked",
+    calendarSyncStatus: syncResult.status,
+    calendarEventId: syncResult.eventId ?? null,
+    calendarSyncError: syncResult.error ?? null,
+  });
+}
+
+async function rollbackBookingStatus(
+  supabase: ReturnType<typeof supabaseServer>,
+  requestId: string,
+) {
+  await supabase
+    .from("booking_request")
+    .update({
+      status: "pending",
+      google_calendar_sync_status: null,
+      google_calendar_sync_error: null,
+      google_calendar_event_id: null,
+      google_calendar_last_attempt_at: null,
+      google_calendar_synced_at: null,
+    })
+    .eq("request_id", requestId);
+}
+
+async function syncBookingToCalendar({
+  supabase,
+  booking,
+  slot,
+  requestId,
+  attemptAt,
+}: {
+  supabase: ReturnType<typeof supabaseServer>;
+  booking: BookingApprovalRow;
+  slot: SlotRow;
+  requestId: string;
+  attemptAt: string;
+}): Promise<{ status: CalendarSyncStatus; eventId?: string; error?: string }> {
+  const { data: artist, error: artistError } = await supabase
+    .from("tattoo_artist")
+    .select("calendar_id,google_calendar_sync_enabled")
+    .limit(1)
+    .maybeSingle<{ calendar_id: string | null; google_calendar_sync_enabled: boolean | null }>();
+
+  if (artistError) {
+    const errorMessage = `Failed to read calendar settings: ${artistError.message}`;
+    await persistSyncFailure(supabase, requestId, attemptAt, errorMessage);
+    return { status: "failed", error: errorMessage };
+  }
+
+  if (!artist?.google_calendar_sync_enabled) {
+    const reason = "Google Calendar sync is disabled.";
+    await persistSyncSkipped(supabase, requestId, attemptAt, reason);
+    return { status: "skipped", error: reason };
+  }
+
+  if (!artist.calendar_id) {
+    const reason = "Google Calendar ID is not configured.";
+    await persistSyncSkipped(supabase, requestId, attemptAt, reason);
+    return { status: "skipped", error: reason };
+  }
+
+  const syncResult = await createGoogleCalendarEvent({
+    calendarId: artist.calendar_id,
+    requestId,
+    clientName: booking.name ?? "Client",
+    email: booking.email,
+    phone: booking.phone,
+    tattooIdea: booking.tattoo_idea,
+    startTimeIso: slot.start_time,
+    endTimeIso: slot.end_time,
+  });
+
+  if (syncResult.status === "synced") {
+    await supabase
+      .from("booking_request")
+      .update({
+        google_calendar_sync_status: "synced",
+        google_calendar_sync_error: null,
+        google_calendar_event_id: syncResult.eventId,
+        google_calendar_last_attempt_at: attemptAt,
+        google_calendar_synced_at: attemptAt,
+        google_calendar_event_origin: APP_CALENDAR_SOURCE,
+      })
+      .eq("request_id", requestId);
+
+    return { status: "synced", eventId: syncResult.eventId };
+  }
+
+  if (syncResult.status === "skipped") {
+    await persistSyncSkipped(supabase, requestId, attemptAt, syncResult.error);
+    return { status: "skipped", error: syncResult.error };
+  }
+
+  await persistSyncFailure(supabase, requestId, attemptAt, syncResult.error);
+  return { status: "failed", error: syncResult.error };
+}
+
+async function persistSyncSkipped(
+  supabase: ReturnType<typeof supabaseServer>,
+  requestId: string,
+  attemptAt: string,
+  reason: string,
+) {
+  await supabase
+    .from("booking_request")
+    .update({
+      google_calendar_sync_status: "skipped",
+      google_calendar_sync_error: reason,
+      google_calendar_last_attempt_at: attemptAt,
+      google_calendar_synced_at: null,
+      google_calendar_event_id: null,
+      google_calendar_event_origin: APP_CALENDAR_SOURCE,
+    })
+    .eq("request_id", requestId);
+}
+
+async function persistSyncFailure(
+  supabase: ReturnType<typeof supabaseServer>,
+  requestId: string,
+  attemptAt: string,
+  errorMessage: string,
+) {
+  await supabase
+    .from("booking_request")
+    .update({
+      google_calendar_sync_status: "failed",
+      google_calendar_sync_error: errorMessage,
+      google_calendar_last_attempt_at: attemptAt,
+      google_calendar_synced_at: null,
+      google_calendar_event_origin: APP_CALENDAR_SOURCE,
+    })
+    .eq("request_id", requestId);
+}

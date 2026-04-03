@@ -19,6 +19,16 @@ export const BOOKING_REQUEST_STATUSES = [
 
 export type BookingRequestStatus = (typeof BOOKING_REQUEST_STATUSES)[number];
 
+export const GOOGLE_CALENDAR_SYNC_STATUSES = [
+  "pending",
+  "synced",
+  "failed",
+  "skipped",
+] as const;
+
+export type GoogleCalendarSyncStatus =
+  (typeof GOOGLE_CALENDAR_SYNC_STATUSES)[number];
+
 const LEGACY_SLOT_STATUS_MAP: Record<string, SlotStatus> = {
   available: "available",
   Available: "available",
