@@ -251,7 +251,7 @@ export default function Dashboard({ onNavigate, onLogout }: DashboardProps) {
       } else if (payload.calendarSyncStatus === "skipped") {
         toast.success("Booking approved and slot booked. Calendar sync was skipped.");
       } else {
-        toast.success("Booking approved and slot booked. Calendar sync failed (retry later).");
+        toast.error("Booking approved and slot booked, but calendar sync failed (retry later).");
       }
 
       // Update local state to reflect approval without a full refetch
