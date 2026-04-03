@@ -1,7 +1,7 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { supabaseBrowser } from "@/lib/supabaseBrowserClient";
 import { useRequireAdmin } from "@/hooks/useRequireAdmin";
 import { type SlotStatus, normalizeSlotStatus } from "@/lib/domain";
@@ -63,7 +63,8 @@ function toIsoLocal(date: string, time: string) {
 
 export default function CalendarPage() {
   const checking = useRequireAdmin();
-  const supabase = supabaseBrowser();
+  const supabase = useMemo(() => supabaseBrowser(), []);
+  const didInitialLoad = useRef(false);
 
   const [artistId, setArtistId] = useState<string | null>(null);
   const [slots, setSlots] = useState<Slot[]>([]);
@@ -87,7 +88,8 @@ export default function CalendarPage() {
 
   // fetch artist id and initial slots
   useEffect(() => {
-    if (checking) return;
+    if (checking || didInitialLoad.current) return;
+    didInitialLoad.current = true;
 
     (async () => {
       // You enabled this schema; use explicit schema selector for clarity.
