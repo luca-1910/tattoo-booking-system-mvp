@@ -5,7 +5,6 @@ import {
   createGoogleCalendarEvent,
   type CalendarSyncStatus,
 } from "@/lib/googleCalendar";
-import { normalizeSlotStatus } from "@/lib/domain";
 import { supabaseServer } from "@/lib/supabaseServerClient";
 
 type RouteContext = {
@@ -32,6 +31,7 @@ type SlotRow = {
 };
 
 type SupabaseServerClient = Awaited<ReturnType<typeof supabaseServer>>;
+type ApprovalRpcResult = { ok: boolean; code: string; message: string };
 
 export async function POST(_req: NextRequest, ctx: RouteContext) {
   const supabase = await supabaseServer();
@@ -46,86 +46,65 @@ export async function POST(_req: NextRequest, ctx: RouteContext) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 403 });
   }
 
+  const { data: approvalData, error: approvalError } = await supabase.rpc(
+    "approve_booking_request",
+    { p_request_id: requestId },
+  );
+
+  if (approvalError) {
+    return NextResponse.json({ error: approvalError.message }, { status: 400 });
+  }
+
+  const approvalResult = (approvalData?.[0] ?? null) as ApprovalRpcResult | null;
+  if (!approvalResult) {
+    return NextResponse.json({ error: "Approval flow failed." }, { status: 500 });
+  }
+
+  if (!approvalResult.ok) {
+    if (approvalResult.code === "not_found") {
+      return NextResponse.json({ error: approvalResult.message }, { status: 404 });
+    }
+    if (approvalResult.code === "missing_slot") {
+      return NextResponse.json({ error: approvalResult.message }, { status: 400 });
+    }
+    if (approvalResult.code === "slot_unavailable" || approvalResult.code === "invalid_state") {
+      return NextResponse.json({ error: approvalResult.message }, { status: 409 });
+    }
+
+    return NextResponse.json({ error: approvalResult.message }, { status: 400 });
+  }
+
   const { data: booking, error: bookingError } = await supabase
     .from("booking_request")
     .select("request_id,status,requested_slot_id,name,email,phone,tattoo_idea")
     .eq("request_id", requestId)
     .maybeSingle<BookingApprovalRow>();
 
-  if (bookingError) {
-    return NextResponse.json({ error: bookingError.message }, { status: 400 });
-  }
-
-  if (!booking) {
-    return NextResponse.json({ error: "Booking request not found." }, { status: 404 });
-  }
-
-  if (!booking.requested_slot_id) {
+  if (bookingError || !booking) {
     return NextResponse.json(
-      { error: "Booking request has no selected slot." },
+      { error: bookingError?.message || "Approved booking not found." },
       { status: 400 },
     );
   }
 
-  const { data: slot, error: slotFetchError } = await supabase
+  if (!booking.requested_slot_id) {
+    return NextResponse.json({ error: "Approved booking has no slot." }, { status: 400 });
+  }
+
+  const { data: slot, error: slotError } = await supabase
     .from("slot")
     .select("slot_id,status,start_time,end_time")
     .eq("slot_id", booking.requested_slot_id)
     .maybeSingle<SlotRow>();
 
-  if (slotFetchError) {
-    return NextResponse.json({ error: slotFetchError.message }, { status: 400 });
-  }
-
-  if (!slot) {
-    return NextResponse.json({ error: "Requested slot not found." }, { status: 404 });
-  }
-
-  const normalizedSlotStatus = normalizeSlotStatus(slot.status);
-  if (normalizedSlotStatus !== "available") {
+  if (slotError || !slot) {
     return NextResponse.json(
-      { error: "Slot is no longer available.", slotStatus: normalizedSlotStatus },
-      { status: 409 },
-    );
-  }
-
-  const { data: bookedRows, error: slotUpdateError } = await supabase
-    .from("slot")
-    .update({ status: "booked" })
-    .eq("slot_id", slot.slot_id)
-    .eq("status", "available")
-    .select("slot_id");
-
-  if (slotUpdateError) {
-    return NextResponse.json({ error: slotUpdateError.message }, { status: 400 });
-  }
-
-  if (!bookedRows || bookedRows.length === 0) {
-    return NextResponse.json(
-      { error: "Slot is no longer available." },
-      { status: 409 },
+      { error: slotError?.message || "Booked slot not found." },
+      { status: 400 },
     );
   }
 
   const approvalTimestamp = new Date().toISOString();
-
-  const { error: bookingApproveError } = await supabase
-    .from("booking_request")
-    .update({
-      status: "approved",
-      google_calendar_sync_status: "pending",
-      google_calendar_sync_error: null,
-      google_calendar_event_id: null,
-      google_calendar_last_attempt_at: null,
-      google_calendar_synced_at: null,
-      google_calendar_event_origin: APP_CALENDAR_SOURCE,
-    })
-    .eq("request_id", requestId);
-
-  if (bookingApproveError) {
-    await supabase.from("slot").update({ status: "available" }).eq("slot_id", slot.slot_id);
-    return NextResponse.json({ error: bookingApproveError.message }, { status: 400 });
-  }
 
   const syncResult = await syncBookingToCalendar({
     supabase,
