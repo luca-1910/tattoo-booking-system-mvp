@@ -31,8 +31,10 @@ type SlotRow = {
   end_time: string;
 };
 
+type SupabaseServerClient = Awaited<ReturnType<typeof supabaseServer>>;
+
 export async function POST(_req: NextRequest, ctx: RouteContext) {
-  const supabase = supabaseServer();
+  const supabase = await supabaseServer();
   const { requestId } = await ctx.params;
 
   const {
@@ -145,7 +147,7 @@ export async function POST(_req: NextRequest, ctx: RouteContext) {
 }
 
 async function rollbackBookingStatus(
-  supabase: ReturnType<typeof supabaseServer>,
+  supabase: SupabaseServerClient,
   requestId: string,
 ) {
   await supabase
@@ -168,7 +170,7 @@ async function syncBookingToCalendar({
   requestId,
   attemptAt,
 }: {
-  supabase: ReturnType<typeof supabaseServer>;
+  supabase: SupabaseServerClient;
   booking: BookingApprovalRow;
   slot: SlotRow;
   requestId: string;
@@ -235,7 +237,7 @@ async function syncBookingToCalendar({
 }
 
 async function persistSyncSkipped(
-  supabase: ReturnType<typeof supabaseServer>,
+  supabase: SupabaseServerClient,
   requestId: string,
   attemptAt: string,
   reason: string,
@@ -254,7 +256,7 @@ async function persistSyncSkipped(
 }
 
 async function persistSyncFailure(
-  supabase: ReturnType<typeof supabaseServer>,
+  supabase: SupabaseServerClient,
   requestId: string,
   attemptAt: string,
   errorMessage: string,
