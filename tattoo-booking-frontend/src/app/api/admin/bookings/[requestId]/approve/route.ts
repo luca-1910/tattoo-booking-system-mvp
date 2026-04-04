@@ -42,34 +42,16 @@ export async function POST(_req: NextRequest, ctx: RouteContext) {
     error: userError,
   } = await supabase.auth.getUser();
 
-<<<<<<< ours
-<<<<<<< ours
-  if (userError || !isConfiguredAdmin(user)) {
-=======
   if (userError || !user || !isConfiguredAdmin(user)) {
->>>>>>> theirs
-=======
-  if (userError || !user || !isConfiguredAdmin(user)) {
->>>>>>> theirs
     return NextResponse.json({ error: "Unauthorized" }, { status: 403 });
   }
 
   const { data: approvalData, error: approvalError } = await supabase.rpc(
     "approve_booking_request",
-<<<<<<< ours
-<<<<<<< ours
-    { p_request_id: requestId },
-=======
-=======
->>>>>>> theirs
     {
       p_request_id: requestId,
       p_admin_user_id: user.id,
     },
-<<<<<<< ours
->>>>>>> theirs
-=======
->>>>>>> theirs
   );
 
   if (approvalError) {

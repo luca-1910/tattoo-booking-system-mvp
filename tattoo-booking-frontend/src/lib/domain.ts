@@ -19,11 +19,6 @@ export const BOOKING_REQUEST_STATUSES = [
 
 export type BookingRequestStatus = (typeof BOOKING_REQUEST_STATUSES)[number];
 
-<<<<<<< ours
-<<<<<<< ours
-=======
-=======
->>>>>>> theirs
 export const BOOKING_REQUEST_ALLOWED_TRANSITIONS: Record<
   BookingRequestStatus,
   BookingRequestStatus[]
@@ -36,10 +31,6 @@ export const BOOKING_REQUEST_ALLOWED_TRANSITIONS: Record<
   expired: [],
 };
 
-<<<<<<< ours
->>>>>>> theirs
-=======
->>>>>>> theirs
 export const GOOGLE_CALENDAR_SYNC_STATUSES = [
   "pending",
   "synced",
