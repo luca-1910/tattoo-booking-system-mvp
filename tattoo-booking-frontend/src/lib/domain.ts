@@ -19,6 +19,21 @@ export const BOOKING_REQUEST_STATUSES = [
 
 export type BookingRequestStatus = (typeof BOOKING_REQUEST_STATUSES)[number];
 
+<<<<<<< ours
+=======
+export const BOOKING_REQUEST_ALLOWED_TRANSITIONS: Record<
+  BookingRequestStatus,
+  BookingRequestStatus[]
+> = {
+  pending: ["approved", "rejected", "expired", "cancelled"],
+  approved: ["completed", "cancelled"],
+  rejected: [],
+  completed: [],
+  cancelled: [],
+  expired: [],
+};
+
+>>>>>>> theirs
 export const GOOGLE_CALENDAR_SYNC_STATUSES = [
   "pending",
   "synced",
@@ -62,4 +77,12 @@ export function normalizeBookingRequestStatus(
     default:
       return "pending";
   }
+}
+
+export function canTransitionBookingRequestStatus(
+  from: BookingRequestStatus,
+  to: BookingRequestStatus,
+): boolean {
+  if (from === to) return true;
+  return BOOKING_REQUEST_ALLOWED_TRANSITIONS[from].includes(to);
 }
