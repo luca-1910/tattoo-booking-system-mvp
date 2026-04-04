@@ -10,7 +10,15 @@ export function getRequiredEnv(name: string): string {
 }
 
 export function getPublicEnvForBrowserClient(name: string): string {
-  const value = process.env[name];
+  // Use string literals so Next.js/Turbopack can statically inline NEXT_PUBLIC_ vars.
+  // Dynamic process.env[name] access is not replaced by the bundler at build time.
+  let value: string | undefined;
+  if (name === "NEXT_PUBLIC_SUPABASE_URL") {
+    value = process.env.NEXT_PUBLIC_SUPABASE_URL;
+  } else if (name === "NEXT_PUBLIC_SUPABASE_ANON_KEY") {
+    value = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
+  }
+
   if (value) return value;
 
   // During Next.js build/prerender, client components can be evaluated on the server.
