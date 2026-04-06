@@ -14,7 +14,6 @@ import { toast } from "sonner";
 export default function SettingsPage() {
   const checking = useRequireAdmin();
   const supabase = supabaseBrowser();
-  
 
   // Artist state
   const [artistId, setArtistId] = useState<string | null>(null);
@@ -30,23 +29,33 @@ export default function SettingsPage() {
 
   useEffect(() => {
     if (checking) return;
-    
 
     const fetchData = async () => {
       try {
         setLoading(true);
 
         // Auth email (display only)
-        const { data: userRes } = await supabase.auth.getUser();
-        if (userRes?.user?.email) {
-          setAuthEmail(userRes.user.email);
+        const { data: userRes, error: userErr } = await supabase.auth.getUser();
+        if (userErr) {
+          toast.error(userErr.message);
+          return;
         }
 
-        // Fetch single artist (source of truth)
+        const user = userRes?.user;
+        if (!user) {
+          toast.error("No active session.");
+          return;
+        }
+
+        if (user.email) {
+          setAuthEmail(user.email);
+        }
+
+        // Fetch the artist tied to the logged-in auth user.
         const { data: artist, error } = await supabase
           .from("tattoo_artist")
           .select("artist_id, name, calendar_id, google_calendar_sync_enabled")
-          .limit(1)
+          .eq("auth_user_id", user.id)
           .maybeSingle();
 
         if (error) {
@@ -83,15 +92,12 @@ export default function SettingsPage() {
 
       const { error } = await supabase
         .from("tattoo_artist")
-        .upsert(
-          {
-            artist_id: artistId, // PK
-            name: artistName,
-            calendar_id: calendarId,
-            google_calendar_sync_enabled: googleCalendarSyncEnabled,
-          },
-          { onConflict: "artist_id" }
-        );
+        .update({
+          name: artistName,
+          calendar_id: calendarId,
+          google_calendar_sync_enabled: googleCalendarSyncEnabled,
+        })
+        .eq("artist_id", artistId);
 
       if (error) throw error;
 

@@ -12,7 +12,6 @@ import { ChevronLeft, ChevronRight, Trash2 } from "lucide-react";
 
 type Slot = {
   slot_id: string;
-  artist_id: string;
   start_time: string; // timestamptz
   end_time: string;   // timestamptz
   status: SlotStatus | null;
@@ -66,7 +65,6 @@ export default function CalendarPage() {
   const supabase = useMemo(() => supabaseBrowser(), []);
   const didInitialLoad = useRef(false);
 
-  const [artistId, setArtistId] = useState<string | null>(null);
   const [slots, setSlots] = useState<Slot[]>([]);
   const [saving, setSaving] = useState(false);
 
@@ -92,29 +90,9 @@ export default function CalendarPage() {
     didInitialLoad.current = true;
 
     (async () => {
-      // You enabled this schema; use explicit schema selector for clarity.
-      const { data: artistRow, error: artistErr } = await supabase
-        .from("tattoo_artist")
-        .select("artist_id")
-        .limit(1)
-        .maybeSingle();
-
-      if (artistErr) {
-        toast.error(artistErr.message);
-        return;
-      }
-      if (!artistRow?.artist_id) {
-        toast.error("No artist found in tattoo_artist");
-        return;
-      }
-
-      setArtistId(artistRow.artist_id);
-
-      // initial fetch
       const { data: rows, error } = await supabase
         .from("slot")
         .select("*")
-        .eq("artist_id", artistRow.artist_id)
         .order("start_time", { ascending: true });
 
       if (error) toast.error(error.message);
@@ -150,10 +128,6 @@ export default function CalendarPage() {
   const currentMonth = cursor.toLocaleString(undefined, { month: "long", year: "numeric" });
 
   async function addSlot() {
-    if (!artistId) {
-      toast.error("Artist not loaded yet.");
-      return;
-    }
     if (!selDate || !startTime || !endTime) {
       toast.error("Pick a date, start and end time.");
       return;
@@ -169,7 +143,6 @@ export default function CalendarPage() {
       setSaving(true);
 
       const payload = {
-        artist_id: artistId,
         start_time: stIso,
         end_time: enIso,
         status: "available" as const,
@@ -358,7 +331,7 @@ export default function CalendarPage() {
 
             <Button
               onClick={addSlot}
-              disabled={saving || !artistId}
+              disabled={saving}
               className="w-full bg-[#a32020] hover:bg-[#8a1b1b]"
             >
               + Add
