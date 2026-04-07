@@ -8,7 +8,7 @@ import { type SlotStatus, normalizeSlotStatus } from "@/lib/domain";
 import { Button } from "./ui/button";
 import { Input } from "./ui/input";
 import { toast } from "sonner";
-import { ChevronLeft, ChevronRight, Trash2 } from "lucide-react";
+import { ChevronLeft, ChevronRight, Trash2, Settings, LogOut, LayoutDashboard } from "lucide-react";
 
 type Slot = {
   slot_id: string;
@@ -60,7 +60,12 @@ function toIsoLocal(date: string, time: string) {
   return dt.toISOString();
 }
 
-export default function CalendarPage() {
+interface CalendarPageProps {
+  onNavigate: (page: string) => void;
+  onLogout: () => void;
+}
+
+export default function CalendarPage({ onNavigate, onLogout }: CalendarPageProps) {
   const checking = useRequireAdmin();
   const supabase = useMemo(() => supabaseBrowser(), []);
   const didInitialLoad = useRef(false);
@@ -198,10 +203,58 @@ export default function CalendarPage() {
     }
   }
 
+  const handleLogout = async () => {
+    const { error } = await supabase.auth.signOut();
+    if (error) {
+      toast.error("Failed to log out. Please try again.");
+      return;
+    }
+    toast.success("Logged out successfully");
+    onLogout();
+  };
+
   if (checking) return null;
 
   return (
-    <div className="min-h-screen bg-[#0a0a0a] text-[#e5e5e5] p-6">
+    <div className="min-h-screen bg-[#0a0a0a] text-[#e5e5e5]">
+      {/* Top Navigation */}
+      <div className="border-b border-[rgba(255,255,255,0.1)] bg-[#1a1a1a] sticky top-0 z-50 shadow-lg shadow-black/20">
+        <div className="max-w-7xl mx-auto px-4 py-4 flex items-center justify-between">
+          <h1 className="hidden sm:block">MissMay Calendar</h1>
+          <div className="flex gap-2 sm:gap-3">
+            <Button
+              variant="ghost"
+              size="icon"
+              onClick={() => onNavigate("dashboard")}
+              className="text-[#e5e5e5] hover:text-[#a32020] hover:bg-[#a32020]/10 sm:w-auto sm:px-4"
+            >
+              <LayoutDashboard className="w-5 h-5" />
+              <span className="hidden sm:inline ml-2">Dashboard</span>
+            </Button>
+            <Button
+              variant="ghost"
+              size="icon"
+              onClick={() => onNavigate("settings")}
+              className="text-[#e5e5e5] hover:text-[#a32020] hover:bg-[#a32020]/10 sm:w-auto sm:px-4"
+            >
+              <Settings className="w-5 h-5" />
+              <span className="hidden sm:inline ml-2">Settings</span>
+            </Button>
+            <Button
+              variant="ghost"
+              size="icon"
+              onClick={handleLogout}
+              className="text-[#e5e5e5] hover:text-[#a32020] hover:bg-[#a32020]/10 sm:w-auto sm:px-4"
+            >
+              <LogOut className="w-5 h-5" />
+              <span className="hidden sm:inline ml-2">Logout</span>
+            </Button>
+          </div>
+        </div>
+      </div>
+
+      {/* Page content */}
+      <div className="p-6">
       {/* Header */}
       <div className="flex items-center justify-between max-w-6xl mx-auto mb-4">
         <h1 className="text-xl">Calendar</h1>
@@ -374,6 +427,7 @@ export default function CalendarPage() {
             </div>
           </div>
         </aside>
+      </div>
       </div>
     </div>
   );

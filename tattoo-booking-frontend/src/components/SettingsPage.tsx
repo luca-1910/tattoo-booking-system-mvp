@@ -2,7 +2,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { ArrowLeft, User, Palette, Save, Calendar as CalendarIcon } from "lucide-react";
+import { User, Palette, Save, Calendar as CalendarIcon, MapPin, Share2, LayoutDashboard, LogOut, ChevronRight, ArrowLeft } from "lucide-react";
 import { useRequireAdmin } from "@/hooks/useRequireAdmin";
 import { supabaseBrowser } from "@/lib/supabaseBrowserClient";
 import { Button } from "./ui/button";
@@ -11,21 +11,54 @@ import { Label } from "./ui/label";
 import { Switch } from "./ui/switch";
 import { toast } from "sonner";
 
-export default function SettingsPage() {
+interface SettingsPageProps {
+  onNavigate: (page: string) => void;
+  onLogout: () => void;
+}
+
+export default function SettingsPage({ onNavigate, onLogout }: SettingsPageProps) {
   const checking = useRequireAdmin();
   const supabase = supabaseBrowser();
 
-  // Artist state
+  // Artist identity
   const [artistId, setArtistId] = useState<string | null>(null);
   const [artistName, setArtistName] = useState("");
+  const [tagline, setTagline] = useState("");
+  const [contactEmail, setContactEmail] = useState("");
+  const [phone, setPhone] = useState("");
+
+  // Calendar
   const [calendarId, setCalendarId] = useState("");
   const [googleCalendarSyncEnabled, setGoogleCalendarSyncEnabled] = useState(false);
 
+  // Studio location & hours
+  const [addressStreet, setAddressStreet] = useState("");
+  const [addressCity, setAddressCity] = useState("");
+  const [hoursWeekday, setHoursWeekday] = useState("");
+  const [hoursWeekend, setHoursWeekend] = useState("");
+
+  // Social & links
+  const [instagramUrl, setInstagramUrl] = useState("");
+  const [shopUrl, setShopUrl] = useState("");
+
+  // Landing page images
+  const [heroImageUrl, setHeroImageUrl] = useState("");
+  const [portfolioImages, setPortfolioImages] = useState<[string, string, string]>(["", "", ""]);
+
   // UI state
   const [authEmail, setAuthEmail] = useState("");
-  const [appearance, setAppearance] = useState({ darkMode: true });
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+  const [activeSection, setActiveSection] = useState("profile");
+  const [mobileShowContent, setMobileShowContent] = useState(false);
+
+  const navItems = [
+    { id: "profile", label: "Profile", icon: <User className="w-4 h-4" /> },
+    { id: "studio", label: "Studio", icon: <MapPin className="w-4 h-4" /> },
+    { id: "social", label: "Social & Links", icon: <Share2 className="w-4 h-4" /> },
+    { id: "images", label: "Landing Images", icon: <Palette className="w-4 h-4" /> },
+    { id: "calendar", label: "Calendar", icon: <CalendarIcon className="w-4 h-4" /> },
+  ];
 
   useEffect(() => {
     if (checking) return;
@@ -34,45 +67,45 @@ export default function SettingsPage() {
       try {
         setLoading(true);
 
-        // Auth email (display only)
         const { data: userRes, error: userErr } = await supabase.auth.getUser();
-        if (userErr) {
-          toast.error(userErr.message);
-          return;
-        }
+        if (userErr) { toast.error(userErr.message); return; }
 
         const user = userRes?.user;
-        if (!user) {
-          toast.error("No active session.");
-          return;
-        }
+        if (!user) { toast.error("No active session."); return; }
 
-        if (user.email) {
-          setAuthEmail(user.email);
-        }
+        if (user.email) setAuthEmail(user.email);
 
-        // Fetch the artist tied to the logged-in auth user.
         const { data: artist, error } = await supabase
           .from("tattoo_artist")
-          .select("artist_id, name, calendar_id, google_calendar_sync_enabled")
+          .select(`
+            artist_id, name, calendar_id, google_calendar_sync_enabled,
+            tagline, contact_email, phone,
+            address_street, address_city, hours_weekday, hours_weekend,
+            instagram_url, shop_url, hero_image_url, portfolio_images
+          `)
           .eq("auth_user_id", user.id)
           .maybeSingle();
 
-        if (error) {
-          toast.error(error.message);
-          return;
-        }
+        if (error) { toast.error(error.message); return; }
+        if (!artist?.artist_id) { toast.error("No artist found in tattoo_artist."); return; }
 
-        if (!artist?.artist_id) {
-          toast.error("No artist found in tattoo_artist.");
-          return;
-        }
-
-        // Hydrate state
         setArtistId(artist.artist_id);
         setArtistName(artist.name ?? "");
         setCalendarId(artist.calendar_id ?? "");
         setGoogleCalendarSyncEnabled(Boolean(artist.google_calendar_sync_enabled));
+        setTagline(artist.tagline ?? "");
+        setContactEmail(artist.contact_email ?? "");
+        setPhone(artist.phone ?? "");
+        setAddressStreet(artist.address_street ?? "");
+        setAddressCity(artist.address_city ?? "");
+        setHoursWeekday(artist.hours_weekday ?? "");
+        setHoursWeekend(artist.hours_weekend ?? "");
+        setInstagramUrl(artist.instagram_url ?? "");
+        setShopUrl(artist.shop_url ?? "");
+        setHeroImageUrl(artist.hero_image_url ?? "");
+
+        const imgs = Array.isArray(artist.portfolio_images) ? artist.portfolio_images : [];
+        setPortfolioImages([imgs[0] ?? "", imgs[1] ?? "", imgs[2] ?? ""]);
       } finally {
         setLoading(false);
       }
@@ -82,10 +115,7 @@ export default function SettingsPage() {
   }, [checking, supabase]);
 
   const handleSave = async () => {
-    if (!artistId) {
-      toast.error("Artist not loaded yet.");
-      return;
-    }
+    if (!artistId) { toast.error("Artist not loaded yet."); return; }
 
     try {
       setSaving(true);
@@ -96,11 +126,21 @@ export default function SettingsPage() {
           name: artistName,
           calendar_id: calendarId,
           google_calendar_sync_enabled: googleCalendarSyncEnabled,
+          tagline,
+          contact_email: contactEmail,
+          phone,
+          address_street: addressStreet,
+          address_city: addressCity,
+          hours_weekday: hoursWeekday,
+          hours_weekend: hoursWeekend,
+          instagram_url: instagramUrl,
+          shop_url: shopUrl,
+          hero_image_url: heroImageUrl,
+          portfolio_images: portfolioImages.filter(Boolean),
         })
         .eq("artist_id", artistId);
 
       if (error) throw error;
-
       toast.success("Settings saved.");
     } catch (e: any) {
       toast.error(e.message || "Failed to save settings.");
@@ -109,150 +149,233 @@ export default function SettingsPage() {
     }
   };
 
+  const updatePortfolioImage = (index: number, value: string) => {
+    setPortfolioImages((prev) => {
+      const next: [string, string, string] = [...prev] as [string, string, string];
+      next[index] = value;
+      return next;
+    });
+  };
+
+  const handleLogout = async () => {
+    const { error } = await supabase.auth.signOut();
+    if (error) { toast.error("Failed to log out. Please try again."); return; }
+    toast.success("Logged out successfully");
+    onLogout();
+  };
+
   if (checking) return null;
 
   return (
-    <div className="min-h-screen bg-[#0a0a0a] text-[#e5e5e5] py-8 px-4">
-      <div className="max-w-4xl mx-auto">
-        <div className="mb-8">
-          <Button
-            variant="ghost"
-            onClick={() => history.back()}
-            className="mb-4 text-[#e5e5e5] hover:text-[#a32020]"
-          >
-            <ArrowLeft className="w-4 h-4 mr-2" />
-            Back
-          </Button>
-          <h1 className="text-3xl font-semibold">Settings</h1>
-        </div>
-
-        {loading ? (
-          <p className="text-[#a0a0a0]">Loading settings…</p>
-        ) : (
-          <div className="space-y-6">
-            {/* Profile */}
-            <div className="bg-[#1a1a1a] rounded-lg p-6 border border-[rgba(255,255,255,0.1)]">
-              <div className="flex items-center gap-3 mb-6">
-                <div className="w-10 h-10 bg-[#a32020]/10 rounded-lg flex items-center justify-center">
-                  <User className="w-5 h-5 text-[#a32020]" />
-                </div>
-                <h2 className="text-xl font-medium">Profile Information</h2>
-              </div>
-
-              <div className="space-y-4">
-                <div>
-                  <Label htmlFor="artist-name">Artist Name</Label>
-                  <Input
-                    id="artist-name"
-                    value={artistName}
-                    onChange={(e) => setArtistName(e.target.value)}
-                    className="mt-2 bg-[#0a0a0a] border-[rgba(255,255,255,0.1)] text-[#e5e5e5]"
-                  />
-                </div>
-
-                <div>
-                  <Label htmlFor="email">Email (from Auth)</Label>
-                  <Input
-                    id="email"
-                    type="email"
-                    value={authEmail}
-                    readOnly
-                    className="mt-2 bg-[#0a0a0a] border-[rgba(255,255,255,0.1)] text-[#a0a0a0] cursor-not-allowed"
-                  />
-                </div>
-
-                <Button
-                  onClick={handleSave}
-                  disabled={saving}
-                  className="bg-[#a32020] hover:bg-[#8a1b1b] text-white"
-                >
-                  <Save className="w-4 h-4 mr-2" />
-                  {saving ? "Saving…" : "Save Profile"}
-                </Button>
-              </div>
-            </div>
-
-            {/* Calendar */}
-            <div className="bg-[#1a1a1a] rounded-lg p-6 border border-[rgba(255,255,255,0.1)]">
-              <div className="flex items-center gap-3 mb-6">
-                <div className="w-10 h-10 bg-[#a32020]/10 rounded-lg flex items-center justify-center">
-                  <CalendarIcon className="w-5 h-5 text-[#a32020]" />
-                </div>
-                <h2 className="text-xl font-medium">Calendar</h2>
-              </div>
-
-              <div className="space-y-4">
-                <div>
-                  <Label htmlFor="calendar-id">Google Calendar ID</Label>
-                  <Input
-                    id="calendar-id"
-                    placeholder="primary or name@domain.com"
-                    value={calendarId}
-                    onChange={(e) => setCalendarId(e.target.value)}
-                    className="mt-2 bg-[#0a0a0a] border-[rgba(255,255,255,0.1)] text-[#e5e5e5]"
-                  />
-                </div>
-
-                <div className="flex items-center justify-between p-4 bg-[#0a0a0a] rounded-lg">
-                  <div>
-                    <p className="text-[#e5e5e5]">Enable Google Calendar Sync</p>
-                    <p className="text-[#a0a0a0]">
-                      When enabled, approved bookings are pushed to your calendar.
-                    </p>
-                  </div>
-                  <Switch
-                    checked={googleCalendarSyncEnabled}
-                    onCheckedChange={setGoogleCalendarSyncEnabled}
-                  />
-                </div>
-
-                <Button
-                  onClick={handleSave}
-                  disabled={saving}
-                  className="bg-[#a32020] hover:bg-[#8a1b1b] text-white"
-                >
-                  <Save className="w-4 h-4 mr-2" />
-                  {saving ? "Saving…" : "Save Calendar Settings"}
-                </Button>
-              </div>
-            </div>
-
-            {/* Appearance (UI only) */}
-            <div className="bg-[#1a1a1a] rounded-lg p-6 border border-[rgba(255,255,255,0.1)]">
-              <div className="flex items-center gap-3 mb-6">
-                <div className="w-10 h-10 bg-[#a32020]/10 rounded-lg flex items-center justify-center">
-                  <Palette className="w-5 h-5 text-[#a32020]" />
-                </div>
-                <h2 className="text-xl font-medium">Appearance</h2>
-              </div>
-
-              <div className="flex items-center justify-between p-4 bg-[#0a0a0a] rounded-lg">
-                <div>
-                  <p className="text-[#e5e5e5]">Dark Mode</p>
-                  <p className="text-[#a0a0a0]">Use dark theme across the app</p>
-                </div>
-                <Switch
-                  checked={appearance.darkMode}
-                  onCheckedChange={() =>
-                    setAppearance((p) => ({ ...p, darkMode: !p.darkMode }))
-                  }
-                />
-              </div>
-            </div>
-
-            <div className="flex justify-end">
-              <Button
-                onClick={handleSave}
-                disabled={saving}
-                className="bg-[#a32020] hover:bg-[#8a1b1b] text-white"
-              >
-                <Save className="w-4 h-4 mr-2" />
-                {saving ? "Saving…" : "Save Changes"}
-              </Button>
-            </div>
+    <div className="min-h-screen bg-[#0a0a0a] text-[#e5e5e5]">
+      {/* Top Navigation */}
+      <div className="border-b border-[rgba(255,255,255,0.1)] bg-[#1a1a1a] sticky top-0 z-50 shadow-lg shadow-black/20">
+        <div className="max-w-7xl mx-auto px-4 py-4 flex items-center justify-between">
+          <h1>Settings</h1>
+          <div className="flex gap-2 sm:gap-3">
+            <Button
+              variant="ghost"
+              size="icon"
+              onClick={() => onNavigate("dashboard")}
+              className="text-[#e5e5e5] hover:text-[#a32020] hover:bg-[#a32020]/10 sm:w-auto sm:px-4"
+            >
+              <LayoutDashboard className="w-5 h-5" />
+              <span className="hidden sm:inline ml-2">Dashboard</span>
+            </Button>
+            <Button
+              variant="ghost"
+              size="icon"
+              onClick={() => onNavigate("calendar")}
+              className="text-[#e5e5e5] hover:text-[#a32020] hover:bg-[#a32020]/10 sm:w-auto sm:px-4"
+            >
+              <CalendarIcon className="w-5 h-5" />
+              <span className="hidden sm:inline ml-2">Calendar</span>
+            </Button>
+            <Button
+              variant="ghost"
+              size="icon"
+              onClick={handleLogout}
+              className="text-[#e5e5e5] hover:text-[#a32020] hover:bg-[#a32020]/10 sm:w-auto sm:px-4"
+            >
+              <LogOut className="w-5 h-5" />
+              <span className="hidden sm:inline ml-2">Logout</span>
+            </Button>
           </div>
-        )}
+        </div>
       </div>
+
+      <div className="max-w-6xl mx-auto py-8 px-4 md:flex md:gap-8">
+        {/* Sidebar — always visible on md+, hidden on mobile when content is shown */}
+        <aside className={`md:w-48 md:shrink-0 ${mobileShowContent ? "hidden md:block" : "block"}`}>
+          <nav className="flex flex-col gap-1">
+            {navItems.map((item) => (
+              <button
+                key={item.id}
+                onClick={() => { setActiveSection(item.id); setMobileShowContent(true); }}
+                className={`flex items-center justify-between gap-3 px-3 py-3 md:py-2.5 rounded-lg text-sm text-left transition-colors ${
+                  activeSection === item.id && mobileShowContent
+                    ? "bg-[#a32020]/15 text-[#e5e5e5] font-medium"
+                    : "text-[#a0a0a0] hover:bg-[#1a1a1a] hover:text-[#e5e5e5]"
+                }`}
+              >
+                <span className="flex items-center gap-3">
+                  {item.icon}
+                  {item.label}
+                </span>
+                <ChevronRight className="w-4 h-4 md:hidden opacity-40" />
+              </button>
+            ))}
+          </nav>
+        </aside>
+
+        {/* Content — always visible on md+, only shown on mobile when drilled in */}
+        <div className={`flex-1 min-w-0 ${mobileShowContent ? "block" : "hidden md:block"}`}>
+          {/* Mobile back button */}
+          <button
+            onClick={() => setMobileShowContent(false)}
+            className="md:hidden flex items-center gap-2 text-sm text-[#a0a0a0] hover:text-[#e5e5e5] mb-4 transition-colors"
+          >
+            <ArrowLeft className="w-4 h-4" />
+            Back
+          </button>
+          {loading ? (
+            <p className="text-[#a0a0a0]">Loading settings…</p>
+          ) : (
+            <>
+              {activeSection === "profile" && (
+                <Section icon={<User />} title="Profile Information">
+                  <Field label="Artist Name">
+                    <Input value={artistName} onChange={(e) => setArtistName(e.target.value)} className={inputCls} />
+                  </Field>
+                  <Field label="Tagline" hint="Shown as the subtitle on the landing page">
+                    <Input value={tagline} placeholder="Fine line artistry. Dark minimalism." onChange={(e) => setTagline(e.target.value)} className={inputCls} />
+                  </Field>
+                  <Field label="Public Contact Email">
+                    <Input type="email" value={contactEmail} placeholder="hello@yourstudio.com" onChange={(e) => setContactEmail(e.target.value)} className={inputCls} />
+                  </Field>
+                  <Field label="Phone">
+                    <Input value={phone} placeholder="+1 (555) 123-4567" onChange={(e) => setPhone(e.target.value)} className={inputCls} />
+                  </Field>
+                  <Field label="Auth Email (read-only)">
+                    <Input type="email" value={authEmail} readOnly className={`${inputCls} text-[#a0a0a0] cursor-not-allowed`} />
+                  </Field>
+                </Section>
+              )}
+
+              {activeSection === "studio" && (
+                <Section icon={<MapPin />} title="Studio Location & Hours">
+                  <Field label="Street Address">
+                    <Input value={addressStreet} placeholder="123 Ink Street" onChange={(e) => setAddressStreet(e.target.value)} className={inputCls} />
+                  </Field>
+                  <Field label="City / State">
+                    <Input value={addressCity} placeholder="Brooklyn, NY 11211" onChange={(e) => setAddressCity(e.target.value)} className={inputCls} />
+                  </Field>
+                  <Field label="Weekday Hours">
+                    <Input value={hoursWeekday} placeholder="Tue - Sat: 11AM - 7PM" onChange={(e) => setHoursWeekday(e.target.value)} className={inputCls} />
+                  </Field>
+                  <Field label="Weekend / Closed Days">
+                    <Input value={hoursWeekend} placeholder="Sun - Mon: Closed" onChange={(e) => setHoursWeekend(e.target.value)} className={inputCls} />
+                  </Field>
+                </Section>
+              )}
+
+              {activeSection === "social" && (
+                <Section icon={<Share2 />} title="Social & Links">
+                  <Field label="Instagram URL">
+                    <Input value={instagramUrl} placeholder="https://instagram.com/yourstudio" onChange={(e) => setInstagramUrl(e.target.value)} className={inputCls} />
+                  </Field>
+                  <Field label="Shop URL">
+                    <Input value={shopUrl} placeholder="https://shop.yourstudio.com" onChange={(e) => setShopUrl(e.target.value)} className={inputCls} />
+                  </Field>
+                </Section>
+              )}
+
+              {activeSection === "images" && (
+                <Section icon={<Palette />} title="Landing Page Images">
+                  <Field label="Hero Background Image URL">
+                    <Input value={heroImageUrl} placeholder="https://…" onChange={(e) => setHeroImageUrl(e.target.value)} className={inputCls} />
+                  </Field>
+                  {([0, 1, 2] as const).map((i) => (
+                    <Field key={i} label={`Portfolio Image ${i + 1} URL`}>
+                      <Input value={portfolioImages[i]} placeholder="https://…" onChange={(e) => updatePortfolioImage(i, e.target.value)} className={inputCls} />
+                    </Field>
+                  ))}
+                </Section>
+              )}
+
+              {activeSection === "calendar" && (
+                <Section icon={<CalendarIcon />} title="Calendar">
+                  <Field label="Google Calendar ID">
+                    <Input value={calendarId} placeholder="primary or name@domain.com" onChange={(e) => setCalendarId(e.target.value)} className={inputCls} />
+                  </Field>
+                  <div className="flex items-center justify-between p-4 bg-[#0a0a0a] rounded-lg">
+                    <div>
+                      <p className="text-[#e5e5e5]">Enable Google Calendar Sync</p>
+                      <p className="text-[#a0a0a0] text-sm">Approved bookings are pushed to your calendar.</p>
+                    </div>
+                    <Switch checked={googleCalendarSyncEnabled} onCheckedChange={setGoogleCalendarSyncEnabled} />
+                  </div>
+                </Section>
+              )}
+
+<div className="flex justify-end mt-6 pb-8">
+                <Button
+                  onClick={handleSave}
+                  disabled={saving}
+                  className="bg-[#a32020] hover:bg-[#8a1b1b] text-white px-8"
+                >
+                  <Save className="w-4 h-4 mr-2" />
+                  {saving ? "Saving…" : "Save All Changes"}
+                </Button>
+              </div>
+            </>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ── Shared helpers ────────────────────────────────────────────────────────────
+
+const inputCls = "mt-1 bg-[#0a0a0a] border-[rgba(255,255,255,0.1)] text-[#e5e5e5]";
+
+function Section({
+  icon,
+  title,
+  children,
+}: {
+  icon: React.ReactNode;
+  title: string;
+  children: React.ReactNode;
+}) {
+  return (
+    <div className="bg-[#1a1a1a] rounded-lg p-6 border border-[rgba(255,255,255,0.1)]">
+      <div className="flex items-center gap-3 mb-6">
+        <div className="w-10 h-10 bg-[#a32020]/10 rounded-lg flex items-center justify-center text-[#a32020]">
+          {icon}
+        </div>
+        <h2 className="text-xl font-medium">{title}</h2>
+      </div>
+      <div className="space-y-4">{children}</div>
+    </div>
+  );
+}
+
+function Field({
+  label,
+  hint,
+  children,
+}: {
+  label: string;
+  hint?: string;
+  children: React.ReactNode;
+}) {
+  return (
+    <div>
+      <Label>{label}</Label>
+      {hint && <p className="text-[#a0a0a0] text-xs mt-0.5 mb-1">{hint}</p>}
+      {children}
     </div>
   );
 }
