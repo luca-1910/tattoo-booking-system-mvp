@@ -9,21 +9,13 @@ import {
   Calendar as CalendarIcon,
   Settings,
   LogOut,
-  BarChart3,
   AlertCircle,
+  LayoutGrid,
+  LayoutList,
 } from "lucide-react";
 import { StatsCard } from "./StatsCard";
 import { BookingCard } from "./BookingCard";
 import { Button } from "./ui/button";
-import {
-  BarChart,
-  Bar,
-  XAxis,
-  YAxis,
-  CartesianGrid,
-  Tooltip,
-  ResponsiveContainer,
-} from "recharts";
 import { toast } from "sonner";
 import { useRequireAdmin } from "@/hooks/useRequireAdmin"; // ✅ guard hook
 import { supabaseBrowser } from "@/lib/supabaseBrowserClient";
@@ -101,15 +93,6 @@ function formatTimeLabel(iso: string) {
   });
 }
 
-const chartData = [
-  { month: "Jan", hoursWorked: 120, hoursAvailable: 160 },
-  { month: "Feb", hoursWorked: 145, hoursAvailable: 160 },
-  { month: "Mar", hoursWorked: 130, hoursAvailable: 160 },
-  { month: "Apr", hoursWorked: 155, hoursAvailable: 160 },
-  { month: "May", hoursWorked: 140, hoursAvailable: 160 },
-  { month: "Jun", hoursWorked: 150, hoursAvailable: 160 },
-];
-
 export default function Dashboard({ onNavigate, onLogout }: DashboardProps) {
   const checking = useRequireAdmin();
   const supabase = supabaseBrowser();
@@ -118,6 +101,7 @@ export default function Dashboard({ onNavigate, onLogout }: DashboardProps) {
   const [loadingBookings, setLoadingBookings] = useState(true);
 
   const [activeFilter, setActiveFilter] = useState<FilterTab>("all");
+  const [viewMode, setViewMode] = useState<"grid" | "card">("grid");
 
   // ─────────────────────────────────────────────────────────
   // Fetch booking requests + their slot date/time
@@ -379,50 +363,68 @@ export default function Dashboard({ onNavigate, onLogout }: DashboardProps) {
           />
         </div>
 
-        {/* Chart (unchanged) */}
-        <div className="bg-[#1a1a1a] rounded-lg p-4 sm:p-6 border border-[rgba(255,255,255,0.1)] mb-6 sm:mb-8 shadow-xl shadow-black/10">
-          <div className="flex items-center gap-2 mb-4 sm:mb-6">
-            <BarChart3 className="w-5 h-5 text-[#a32020]" />
-            <h2>Hours Worked vs Available</h2>
-          </div>
-          <ResponsiveContainer width="100%" height={250}>
-            <BarChart data={chartData}>
-              <CartesianGrid
-                strokeDasharray="3 3"
-                stroke="rgba(255,255,255,0.05)"
-              />
-              <XAxis dataKey="month" stroke="#a0a0a0" />
-              <YAxis stroke="#a0a0a0" />
-              <Tooltip
-                contentStyle={{
-                  backgroundColor: "#1a1a1a",
-                  border: "1px solid rgba(255,255,255,0.1)",
-                  borderRadius: "8px",
-                  color: "#e5e5e5",
-                }}
-              />
-              <Bar dataKey="hoursWorked" fill="#a32020" radius={[4, 4, 0, 0]} />
-              <Bar
-                dataKey="hoursAvailable"
-                fill="#2a2a2a"
-                radius={[4, 4, 0, 0]}
-              />
-            </BarChart>
-          </ResponsiveContainer>
-        </div>
+        {/* Upcoming Appointments */}
+        {(() => {
+          const upcoming = bookings
+            .filter((b) => b.status === "approved" && b.date !== "TBD")
+            .slice(0, 4);
+          return (
+            <div className="bg-[#1a1a1a] rounded-lg p-4 sm:p-6 border border-[rgba(255,255,255,0.1)] mb-6 sm:mb-8 shadow-xl shadow-black/10">
+              <div className="flex items-center gap-2 mb-4">
+                <CalendarIcon className="w-5 h-5 text-[#a32020]" />
+                <h2>Upcoming Appointments</h2>
+              </div>
+              {upcoming.length === 0 ? (
+                <p className="text-[#a0a0a0] text-sm">No upcoming approved appointments.</p>
+              ) : (
+                <div className="divide-y divide-[rgba(255,255,255,0.06)]">
+                  {upcoming.map((b) => (
+                    <div key={b.id} className="flex items-center justify-between py-3 first:pt-0 last:pb-0">
+                      <div>
+                        <p className="text-[#e5e5e5] font-medium">{b.clientName}</p>
+                        <p className="text-[#a0a0a0] text-sm line-clamp-1">{b.tattooIdea}</p>
+                      </div>
+                      <div className="text-right shrink-0 ml-4">
+                        <p className="text-[#e5e5e5] text-sm">{b.date}</p>
+                        <p className="text-[#a0a0a0] text-xs">{b.time}</p>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          );
+        })()}
 
         {/* Booking List */}
         <div>
           <div className="flex items-center justify-between mb-4 sm:mb-6">
             <h2>Booking Requests</h2>
-
-            <Button
-              variant="ghost"
-              onClick={fetchBookings}
-              className="text-[#e5e5e5] hover:text-[#a32020] hover:bg-[#a32020]/10"
-            >
-              {loadingBookings ? "Refreshing…" : "Refresh"}
-            </Button>
+            <div className="flex items-center gap-2">
+              <div className="flex rounded-lg border border-[rgba(255,255,255,0.1)] overflow-hidden">
+                <button
+                  onClick={() => setViewMode("grid")}
+                  className={`p-2 transition-colors ${viewMode === "grid" ? "bg-[#a32020]/20 text-[#a32020]" : "text-[#a0a0a0] hover:text-[#e5e5e5] hover:bg-[#1a1a1a]"}`}
+                  title="Grid view"
+                >
+                  <LayoutGrid className="w-4 h-4" />
+                </button>
+                <button
+                  onClick={() => setViewMode("card")}
+                  className={`p-2 transition-colors ${viewMode === "card" ? "bg-[#a32020]/20 text-[#a32020]" : "text-[#a0a0a0] hover:text-[#e5e5e5] hover:bg-[#1a1a1a]"}`}
+                  title="Card view"
+                >
+                  <LayoutList className="w-4 h-4" />
+                </button>
+              </div>
+              <Button
+                variant="ghost"
+                onClick={fetchBookings}
+                className="text-[#e5e5e5] hover:text-[#a32020] hover:bg-[#a32020]/10"
+              >
+                {loadingBookings ? "Refreshing…" : "Refresh"}
+              </Button>
+            </div>
           </div>
 
           <div className="bg-[#1a1a1a] rounded-lg p-2 sm:p-4 border border-[rgba(255,255,255,0.1)] mb-6 shadow-xl shadow-black/10">
@@ -457,7 +459,7 @@ export default function Dashboard({ onNavigate, onLogout }: DashboardProps) {
             </div>
           </div>
 
-          <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+          <div className={viewMode === "grid" ? "grid grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-3" : "grid grid-cols-1 lg:grid-cols-2 gap-4"}>
             {loadingBookings ? (
               <div className="col-span-full bg-[#1a1a1a] rounded-lg p-12 border border-[rgba(255,255,255,0.1)] text-center">
                 <p className="text-[#a0a0a0]">Loading booking requests…</p>
@@ -469,6 +471,7 @@ export default function Dashboard({ onNavigate, onLogout }: DashboardProps) {
                   booking={booking}
                   onApprove={handleApprove}
                   onReject={handleReject}
+                  compact={viewMode === "grid"}
                 />
               ))
             ) : (

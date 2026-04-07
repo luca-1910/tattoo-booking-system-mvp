@@ -1,7 +1,7 @@
 /* eslint-disable @next/next/no-img-element */
 "use client";
 
-import { Check, X, Calendar, Image as ImageIcon, ExternalLink as ExternalLinkIcon } from "lucide-react";
+import { Check, X, Calendar, Image as ImageIcon, ExternalLink as ExternalLinkIcon, Clock } from "lucide-react";
 import { type BookingRequestStatus } from "@/lib/domain";
 import { Button } from "./ui/button";
 import { Badge } from "./ui/badge";
@@ -34,9 +34,10 @@ interface BookingCardProps {
   booking: Booking;
   onApprove: (id: string | number) => void;
   onReject: (id: string | number) => void;
+  compact?: boolean;
 }
 
-export function BookingCard({ booking, onApprove, onReject }: BookingCardProps) {
+export function BookingCard({ booking, onApprove, onReject, compact = false }: BookingCardProps) {
   const statusColors: Record<Booking["status"], string> = {
     pending: "bg-yellow-500/10 text-yellow-500 border-yellow-500/20",
     approved: "bg-green-500/10 text-green-500 border-green-500/20",
@@ -55,61 +56,72 @@ export function BookingCard({ booking, onApprove, onReject }: BookingCardProps) 
     <Dialog>
       {/* Card is clickable */}
       <DialogTrigger asChild>
-        <div className="bg-[#1a1a1a] rounded-lg p-6 border border-[rgba(255,255,255,0.1)] hover:border-[#a32020] hover:shadow-lg hover:shadow-[#a32020]/10 transition-all duration-300 hover:-translate-y-1 cursor-pointer">
-          <div className="flex items-start justify-between mb-4">
-            <div>
-              <h3 className="mb-1">{booking.clientName}</h3>
-              <p className="text-[#a0a0a0]">{booking.email}</p>
-              <p className="text-[#a0a0a0]">{booking.phone}</p>
+        {compact ? (
+          /* ── Compact grid tile ── */
+          <div className="bg-[#1a1a1a] rounded-lg p-4 border border-[rgba(255,255,255,0.1)] hover:border-[#a32020] hover:shadow-lg hover:shadow-[#a32020]/10 transition-all duration-300 cursor-pointer flex flex-col gap-3">
+            <div className="flex items-start justify-between gap-2">
+              <p className="font-medium text-[#e5e5e5] truncate">{booking.clientName}</p>
+              <Badge className={`${statusColors[booking.status]} shrink-0 text-xs`}>{booking.status}</Badge>
             </div>
-            <Badge className={statusColors[booking.status]}>{booking.status}</Badge>
-          </div>
-
-          <div className="space-y-3 mb-4">
-            <div>
-              <p className="text-[#a0a0a0] mb-1">Tattoo Idea</p>
-              <p className="text-[#e5e5e5] line-clamp-3">{booking.tattooIdea}</p>
+            <p className="text-[#a0a0a0] text-sm line-clamp-2 leading-snug">{booking.tattooIdea}</p>
+            <div className="flex items-center gap-1.5 text-xs text-[#a0a0a0]">
+              <Clock className="w-3 h-3 shrink-0" />
+              <span className="truncate">{booking.date} · {booking.time}</span>
             </div>
-
-            <div className="flex items-center gap-4">
-              <div className="flex items-center gap-2 text-[#a0a0a0]">
-                <Calendar className="w-4 h-4" />
-                <span>
-                  {booking.date} at {booking.time}
-                </span>
+            {booking.status === "pending" && (
+              <div className="flex gap-2 mt-auto" onClick={(e) => e.stopPropagation()}>
+                <Button size="sm" onClick={() => onApprove(booking.id)} className="flex-1 bg-green-600 hover:bg-green-700 text-white h-7 text-xs">
+                  <Check className="w-3 h-3 mr-1" /> Approve
+                </Button>
+                <Button size="sm" onClick={() => onReject(booking.id)} variant="outline" className="flex-1 border-red-500/20 text-red-500 hover:bg-red-500/10 h-7 text-xs">
+                  <X className="w-3 h-3 mr-1" /> Reject
+                </Button>
               </div>
-
-              {booking.hasImages && (
-                <div className="flex items-center gap-2 text-[#a0a0a0]">
-                  <ImageIcon className="w-4 h-4" />
-                  <span>{booking.imageCount} images</span>
-                </div>
-              )}
-            </div>
+            )}
           </div>
-
-          {/* Actions (same UI); stopPropagation so clicking buttons doesn't open modal */}
-          {booking.status === "pending" && (
-            <div className="flex gap-3" onClick={(e) => e.stopPropagation()}>
-              <Button
-                onClick={() => onApprove(booking.id)}
-                className="flex-1 bg-green-600 hover:bg-green-700 text-white"
-              >
-                <Check className="w-4 h-4 mr-2" />
-                Approve
-              </Button>
-
-              <Button
-                onClick={() => onReject(booking.id)}
-                variant="outline"
-                className="flex-1 border-red-500/20 text-red-500 hover:bg-red-500/10"
-              >
-                <X className="w-4 h-4 mr-2" />
-                Reject
-              </Button>
+        ) : (
+          /* ── Full card ── */
+          <div className="bg-[#1a1a1a] rounded-lg p-6 border border-[rgba(255,255,255,0.1)] hover:border-[#a32020] hover:shadow-lg hover:shadow-[#a32020]/10 transition-all duration-300 hover:-translate-y-1 cursor-pointer">
+            <div className="flex items-start justify-between mb-4">
+              <div>
+                <h3 className="mb-1">{booking.clientName}</h3>
+                <p className="text-[#a0a0a0]">{booking.email}</p>
+                <p className="text-[#a0a0a0]">{booking.phone}</p>
+              </div>
+              <Badge className={statusColors[booking.status]}>{booking.status}</Badge>
             </div>
-          )}
-        </div>
+
+            <div className="space-y-3 mb-4">
+              <div>
+                <p className="text-[#a0a0a0] mb-1">Tattoo Idea</p>
+                <p className="text-[#e5e5e5] line-clamp-3">{booking.tattooIdea}</p>
+              </div>
+              <div className="flex items-center gap-4">
+                <div className="flex items-center gap-2 text-[#a0a0a0]">
+                  <Calendar className="w-4 h-4" />
+                  <span>{booking.date} at {booking.time}</span>
+                </div>
+                {booking.hasImages && (
+                  <div className="flex items-center gap-2 text-[#a0a0a0]">
+                    <ImageIcon className="w-4 h-4" />
+                    <span>{booking.imageCount} images</span>
+                  </div>
+                )}
+              </div>
+            </div>
+
+            {booking.status === "pending" && (
+              <div className="flex gap-3" onClick={(e) => e.stopPropagation()}>
+                <Button onClick={() => onApprove(booking.id)} className="flex-1 bg-green-600 hover:bg-green-700 text-white">
+                  <Check className="w-4 h-4 mr-2" /> Approve
+                </Button>
+                <Button onClick={() => onReject(booking.id)} variant="outline" className="flex-1 border-red-500/20 text-red-500 hover:bg-red-500/10">
+                  <X className="w-4 h-4 mr-2" /> Reject
+                </Button>
+              </div>
+            )}
+          </div>
+        )}
       </DialogTrigger>
 
       {/* Modal */}
