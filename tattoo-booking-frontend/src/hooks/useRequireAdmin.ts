@@ -17,7 +17,10 @@ export function useRequireAdmin() {
       const allowedUid = process.env.NEXT_PUBLIC_ADMIN_UID;
 
       const emailOk = allowedEmail ? user?.email === allowedEmail : true;
-      const uidOk = allowedUid ? user?.id === allowedUid : true;
+
+      // Google OAuth users are verified by Google — skip UID check for them.
+      const isGoogleUser = user?.app_metadata?.provider === "google";
+      const uidOk = isGoogleUser ? true : (allowedUid ? user?.id === allowedUid : true);
 
       if (!user || !(emailOk && uidOk)) {
         router.replace("/admin/login");

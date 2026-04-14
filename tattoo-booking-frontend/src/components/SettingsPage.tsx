@@ -2,7 +2,8 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { User, Palette, Save, Calendar as CalendarIcon, MapPin, Share2, LayoutDashboard, LogOut, ChevronRight, ArrowLeft } from "lucide-react";
+import { useSearchParams } from "next/navigation";
+import { User, Palette, Save, Calendar as CalendarIcon, MapPin, Share2, LayoutDashboard, LogOut, ChevronRight, ArrowLeft, CheckCircle2, XCircle } from "lucide-react";
 import { useRequireAdmin } from "@/hooks/useRequireAdmin";
 import { supabaseBrowser } from "@/lib/supabaseBrowserClient";
 import { Button } from "./ui/button";
@@ -19,6 +20,7 @@ interface SettingsPageProps {
 export default function SettingsPage({ onNavigate, onLogout }: SettingsPageProps) {
   const checking = useRequireAdmin();
   const supabase = supabaseBrowser();
+  const searchParams = useSearchParams();
 
   // Artist identity
   const [artistId, setArtistId] = useState<string | null>(null);
@@ -30,6 +32,8 @@ export default function SettingsPage({ onNavigate, onLogout }: SettingsPageProps
   // Calendar
   const [calendarId, setCalendarId] = useState("");
   const [googleCalendarSyncEnabled, setGoogleCalendarSyncEnabled] = useState(false);
+  const [isGoogleConnected, setIsGoogleConnected] = useState(false);
+  const [isGoogleUser, setIsGoogleUser] = useState(false);
 
   // Studio location & hours
   const [addressStreet, setAddressStreet] = useState("");
@@ -74,6 +78,7 @@ export default function SettingsPage({ onNavigate, onLogout }: SettingsPageProps
         if (!user) { toast.error("No active session."); return; }
 
         if (user.email) setAuthEmail(user.email);
+        setIsGoogleUser(user.app_metadata?.provider === "google");
 
         const { data: artist, error } = await supabase
           .from("tattoo_artist")
@@ -81,7 +86,8 @@ export default function SettingsPage({ onNavigate, onLogout }: SettingsPageProps
             artist_id, name, calendar_id, google_calendar_sync_enabled,
             tagline, contact_email, phone,
             address_street, address_city, hours_weekday, hours_weekend,
-            instagram_url, shop_url, hero_image_url, portfolio_images
+            instagram_url, shop_url, hero_image_url, portfolio_images,
+            google_refresh_token
           `)
           .eq("auth_user_id", user.id)
           .maybeSingle();
@@ -90,6 +96,7 @@ export default function SettingsPage({ onNavigate, onLogout }: SettingsPageProps
         if (!artist?.artist_id) { toast.error("No artist found in tattoo_artist."); return; }
 
         setArtistId(artist.artist_id);
+        setIsGoogleConnected(Boolean(artist.google_refresh_token));
         setArtistName(artist.name ?? "");
         setCalendarId(artist.calendar_id ?? "");
         setGoogleCalendarSyncEnabled(Boolean(artist.google_calendar_sync_enabled));
@@ -113,6 +120,18 @@ export default function SettingsPage({ onNavigate, onLogout }: SettingsPageProps
 
     fetchData();
   }, [checking, supabase]);
+
+  // Show toast when redirected back after Google Calendar OAuth
+  useEffect(() => {
+    const googleParam = searchParams.get("google");
+    if (googleParam === "connected") {
+      setIsGoogleConnected(true);
+      toast.success("Google Calendar connected successfully.");
+    } else if (googleParam === "error") {
+      const reason = searchParams.get("reason");
+      toast.error(reason === "db_write" ? "Connected but failed to save tokens. Try again." : "Google Calendar connection failed. Please try again.");
+    }
+  }, [searchParams]);
 
   const handleSave = async () => {
     if (!artistId) { toast.error("Artist not loaded yet."); return; }
@@ -305,6 +324,44 @@ export default function SettingsPage({ onNavigate, onLogout }: SettingsPageProps
 
               {activeSection === "calendar" && (
                 <Section icon={<CalendarIcon />} title="Calendar">
+                  {/* Connection status */}
+                  <div className="flex items-center justify-between p-4 bg-[#0a0a0a] rounded-lg">
+                    <div>
+                      <p className="text-[#e5e5e5] font-medium">Google Account</p>
+                      <p className="text-[#a0a0a0] text-sm">
+                        {isGoogleConnected
+                          ? isGoogleUser
+                            ? "Connected via Google Sign-In"
+                            : "Connected via OAuth"
+                          : "Not connected — required for calendar sync"}
+                      </p>
+                    </div>
+                    {isGoogleConnected ? (
+                      <span className="flex items-center gap-1.5 text-sm text-emerald-400">
+                        <CheckCircle2 className="w-4 h-4" />
+                        Connected
+                      </span>
+                    ) : (
+                      <span className="flex items-center gap-1.5 text-sm text-red-400">
+                        <XCircle className="w-4 h-4" />
+                        Not connected
+                      </span>
+                    )}
+                  </div>
+
+                  {/* Connect button — only shown for email/password users who aren't connected yet */}
+                  {!isGoogleConnected && !isGoogleUser && (
+                    <a href="/api/google/start" className="block">
+                      <Button
+                        type="button"
+                        variant="outline"
+                        className="w-full bg-[#0a0a0a] border-[rgba(255,255,255,0.15)] text-[#e5e5e5] hover:bg-[#222] hover:border-[rgba(255,255,255,0.3)]"
+                      >
+                        Connect Google Calendar
+                      </Button>
+                    </a>
+                  )}
+
                   <Field label="Google Calendar ID">
                     <Input value={calendarId} placeholder="primary or name@domain.com" onChange={(e) => setCalendarId(e.target.value)} className={inputCls} />
                   </Field>

@@ -1,3 +1,4 @@
+/* eslint-disable @typescript-eslint/no-explicit-any */
 import { getValidAccessToken } from "@/utils/googleRefreshToken";
 
 export const APP_CALENDAR_SOURCE = "tattoo-booking-mvp";
@@ -20,21 +21,28 @@ type CalendarSyncResult =
   | { status: "failed"; error: string }
   | { status: "skipped"; error: string };
 
+/**
+ * Creates a Google Calendar event for an approved booking.
+ *
+ * Pass `opts.artistId` + `opts.supabase` so tokens are read from / written
+ * back to the `tattoo_artist` row (DB mode). Falls back to env vars when
+ * those options are omitted (dev / legacy use).
+ */
 export async function createGoogleCalendarEvent(
   input: CalendarEventInput,
+  opts?: { artistId?: string; supabase?: any },
 ): Promise<CalendarSyncResult> {
   const clientId = process.env.GOOGLE_CLIENT_ID;
   const clientSecret = process.env.GOOGLE_CLIENT_SECRET;
-  const refreshToken = process.env.GOOGLE_REFRESH_TOKEN;
 
-  if (!clientId || !clientSecret || !refreshToken) {
-    return { status: "skipped", error: "Google OAuth is not configured." };
+  if (!clientId || !clientSecret) {
+    return { status: "skipped", error: "Google OAuth credentials are not configured." };
   }
 
   let accessToken: string;
 
   try {
-    accessToken = await getValidAccessToken();
+    accessToken = await getValidAccessToken(opts?.artistId, opts?.supabase);
   } catch (error) {
     return {
       status: "failed",

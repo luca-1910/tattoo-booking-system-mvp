@@ -142,9 +142,9 @@ async function syncBookingToCalendar({
 }): Promise<{ status: CalendarSyncStatus; eventId?: string; error?: string }> {
   const { data: artist, error: artistError } = await supabase
     .from("tattoo_artist")
-    .select("calendar_id,google_calendar_sync_enabled")
+    .select("id,calendar_id,google_calendar_sync_enabled")
     .limit(1)
-    .maybeSingle<{ calendar_id: string | null; google_calendar_sync_enabled: boolean | null }>();
+    .maybeSingle<{ id: string; calendar_id: string | null; google_calendar_sync_enabled: boolean | null }>();
 
   if (artistError) {
     const errorMessage = `Failed to read calendar settings: ${artistError.message}`;
@@ -164,16 +164,19 @@ async function syncBookingToCalendar({
     return { status: "skipped", error: reason };
   }
 
-  const syncResult = await createGoogleCalendarEvent({
-    calendarId: artist.calendar_id,
-    requestId,
-    clientName: booking.name ?? "Client",
-    email: booking.email,
-    phone: booking.phone,
-    tattooIdea: booking.tattoo_idea,
-    startTimeIso: slot.start_time,
-    endTimeIso: slot.end_time,
-  });
+  const syncResult = await createGoogleCalendarEvent(
+    {
+      calendarId: artist.calendar_id,
+      requestId,
+      clientName: booking.name ?? "Client",
+      email: booking.email,
+      phone: booking.phone,
+      tattooIdea: booking.tattoo_idea,
+      startTimeIso: slot.start_time,
+      endTimeIso: slot.end_time,
+    },
+    { artistId: artist.id, supabase },
+  );
 
   if (syncResult.status === "synced") {
     await supabase
