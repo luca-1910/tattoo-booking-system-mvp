@@ -17,7 +17,7 @@ import { StatsCard } from "./StatsCard";
 import { BookingCard } from "./BookingCard";
 import { Button } from "./ui/button";
 import { toast } from "sonner";
-import { useRequireAdmin } from "@/hooks/useRequireAdmin"; // ✅ guard hook
+import { useRequireArtistProfile } from "@/hooks/useRequireAdmin"; // ✅ guard hook
 import { supabaseBrowser } from "@/lib/supabaseBrowserClient";
 import {
   type BookingRequestStatus,
@@ -94,7 +94,7 @@ function formatTimeLabel(iso: string) {
 }
 
 export default function Dashboard({ onNavigate, onLogout }: DashboardProps) {
-  const checking = useRequireAdmin();
+  const checking = useRequireArtistProfile();
   const supabase = supabaseBrowser();
 
   const [bookings, setBookings] = useState<BookingUI[]>([]);

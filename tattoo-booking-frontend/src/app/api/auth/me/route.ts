@@ -38,7 +38,12 @@ export async function GET() {
         const { error } = await supabase
           .from("tattoo_artist")
           .upsert(
-            { auth_user_id: user.id, name: displayName, contact_email: user.email ?? null },
+            {
+              auth_user_id: user.id,
+              name: displayName,
+              email: user.email ?? "",
+              contact_email: user.email ?? null,
+            },
             { onConflict: "auth_user_id", ignoreDuplicates: true },
           );
 
@@ -48,7 +53,19 @@ export async function GET() {
       }
     }
 
-    return NextResponse.json({ isAdmin: admin });
+    // Check whether the artist profile row exists so the client can gate
+    // onboarding before the user reaches the dashboard.
+    let hasArtistProfile = false;
+    if (admin && user) {
+      const { data } = await supabase
+        .from("tattoo_artist")
+        .select("artist_id")
+        .eq("auth_user_id", user.id)
+        .maybeSingle();
+      hasArtistProfile = Boolean(data?.artist_id);
+    }
+
+    return NextResponse.json({ isAdmin: admin, hasArtistProfile });
   } catch {
     // Treat any unexpected error as "not admin" — never expose internals.
     return NextResponse.json({ isAdmin: false });

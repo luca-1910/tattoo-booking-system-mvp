@@ -17,15 +17,34 @@ import { supabaseServer } from "@/lib/supabaseServerClient";
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
 const mockUpsert = vi.fn().mockResolvedValue({ error: null });
+const mockMaybeSingle = vi.fn().mockResolvedValue({ data: { artist_id: "a1" } });
+
+/**
+ * Builds a minimal Supabase client mock.
+ *
+ * The route calls `from()` twice:
+ *   1. `.from("tattoo_artist").upsert(...)` — lazy init
+ *   2. `.from("tattoo_artist").select(...).eq(...).maybeSingle()` — profile check
+ *
+ * We return a chain-friendly object from every `from()` call.
+ */
+function buildFromMock() {
+  return {
+    upsert: mockUpsert,
+    select: vi.fn().mockReturnValue({
+      eq: vi.fn().mockReturnValue({
+        maybeSingle: mockMaybeSingle,
+      }),
+    }),
+  };
+}
 
 function buildSupabaseMock(user: object | null) {
   return {
     auth: {
       getUser: vi.fn().mockResolvedValue({ data: { user }, error: null }),
     },
-    from: vi.fn().mockReturnValue({
-      upsert: vi.fn().mockResolvedValue({ error: null }),
-    }),
+    from: vi.fn().mockReturnValue(buildFromMock()),
   };
 }
 
@@ -34,9 +53,7 @@ function buildSupabaseMockWithUpsertSpy(user: object | null) {
     auth: {
       getUser: vi.fn().mockResolvedValue({ data: { user }, error: null }),
     },
-    from: vi.fn().mockReturnValue({
-      upsert: mockUpsert,
-    }),
+    from: vi.fn().mockReturnValue(buildFromMock()),
   };
 }
 
@@ -44,6 +61,7 @@ beforeEach(() => {
   vi.clearAllMocks();
   vi.unstubAllEnvs();
   mockUpsert.mockResolvedValue({ error: null });
+  mockMaybeSingle.mockResolvedValue({ data: { artist_id: "a1" } });
 });
 
 // ── Tests ─────────────────────────────────────────────────────────────────────
@@ -104,6 +122,39 @@ describe("GET /api/auth/me", () => {
     const body = await res.json();
     expect(JSON.stringify(body)).not.toContain("admin@example.com");
     expect(JSON.stringify(body)).not.toContain("secret-uid");
+  });
+
+  it("returns hasArtistProfile=true when the artist row exists", async () => {
+    mockMaybeSingle.mockResolvedValue({ data: { artist_id: "a1" } });
+    vi.mocked(supabaseServer).mockResolvedValue(
+      buildSupabaseMock({ id: "u1", email: "admin@example.com", app_metadata: { provider: "email" } }) as never,
+    );
+
+    const res = await GET();
+    const body = await res.json();
+    expect(body.hasArtistProfile).toBe(true);
+  });
+
+  it("returns hasArtistProfile=false when the artist row does not exist", async () => {
+    mockMaybeSingle.mockResolvedValue({ data: null });
+    vi.mocked(supabaseServer).mockResolvedValue(
+      buildSupabaseMock({ id: "u1", email: "admin@example.com", app_metadata: { provider: "email" } }) as never,
+    );
+
+    const res = await GET();
+    const body = await res.json();
+    expect(body.hasArtistProfile).toBe(false);
+  });
+
+  it("returns hasArtistProfile=false when not admin", async () => {
+    vi.stubEnv("ADMIN_EMAIL", "admin@example.com");
+    vi.mocked(supabaseServer).mockResolvedValue(
+      buildSupabaseMock({ id: "u1", email: "other@example.com", app_metadata: { provider: "email" } }) as never,
+    );
+
+    const res = await GET();
+    const body = await res.json();
+    expect(body.hasArtistProfile).toBe(false);
   });
 });
 

@@ -52,7 +52,12 @@ export async function POST(req: NextRequest) {
   const { error } = await dbClient
     .from("tattoo_artist")
     .upsert(
-      { auth_user_id: user.id, name: displayName, contact_email: contactEmail },
+      {
+        auth_user_id: user.id,
+        name: displayName,
+        email: user.email ?? "",
+        contact_email: contactEmail,
+      },
       { onConflict: "auth_user_id", ignoreDuplicates: true },
     );
 

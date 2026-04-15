@@ -6,7 +6,8 @@ import userEvent from "@testing-library/user-event";
 
 // Admin guard — always passes so tests focus on dashboard behaviour
 vi.mock("@/hooks/useRequireAdmin", () => ({
-  useRequireAdmin: vi.fn().mockReturnValue(false), // false = not checking, user is admin
+  useRequireAdmin: vi.fn().mockReturnValue(false),        // false = not checking, user is admin
+  useRequireArtistProfile: vi.fn().mockReturnValue(false), // false = not checking, profile exists
 }));
 
 vi.mock("next/navigation", () => ({
