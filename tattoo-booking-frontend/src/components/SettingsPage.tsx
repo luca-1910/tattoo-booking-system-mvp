@@ -403,13 +403,11 @@ export default function SettingsPage({ onNavigate, onLogout }: SettingsPageProps
                   {/* Connection status */}
                   <div className="flex items-center justify-between p-4 bg-[#0a0a0a] rounded-lg">
                     <div>
-                      <p className="text-[#e5e5e5] font-medium">Google Account</p>
+                      <p className="text-[#e5e5e5] font-medium">Google Calendar Access</p>
                       <p className="text-[#a0a0a0] text-sm">
                         {isGoogleConnected
-                          ? isGoogleUser
-                            ? "Connected via Google Sign-In"
-                            : "Connected via OAuth"
-                          : "Not connected — required for calendar sync"}
+                          ? "Calendar access granted — sync is ready"
+                          : "Calendar access not granted — click Connect below"}
                       </p>
                     </div>
                     {isGoogleConnected ? (
@@ -425,8 +423,11 @@ export default function SettingsPage({ onNavigate, onLogout }: SettingsPageProps
                     )}
                   </div>
 
-                  {/* Connect button — only shown for email/password users who aren't connected yet */}
-                  {!isGoogleConnected && !isGoogleUser && (
+                  {/* Connect button — shown whenever calendar access isn't confirmed.
+                      Google Sign-In covers authentication but Supabase may not persist
+                      the provider refresh token, so we always offer the explicit OAuth
+                      flow so the app can create calendar events server-side. */}
+                  {!isGoogleConnected && (
                     <a href="/api/google/start" className="block">
                       <Button
                         type="button"
@@ -434,6 +435,17 @@ export default function SettingsPage({ onNavigate, onLogout }: SettingsPageProps
                         className="w-full bg-[#0a0a0a] border-[rgba(255,255,255,0.15)] text-[#e5e5e5] hover:bg-[#222] hover:border-[rgba(255,255,255,0.3)]"
                       >
                         Connect Google Calendar
+                      </Button>
+                    </a>
+                  )}
+                  {isGoogleConnected && (
+                    <a href="/api/google/start" className="block">
+                      <Button
+                        type="button"
+                        variant="outline"
+                        className="w-full bg-[#0a0a0a] border-[rgba(255,255,255,0.15)] text-[#a0a0a0] hover:bg-[#222] hover:border-[rgba(255,255,255,0.3)] text-sm"
+                      >
+                        Re-authorise Google Calendar
                       </Button>
                     </a>
                   )}

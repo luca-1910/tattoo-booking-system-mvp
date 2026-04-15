@@ -232,9 +232,11 @@ export default function Dashboard({ onNavigate, onLogout }: DashboardProps) {
       if (payload.calendarSyncStatus === "synced") {
         toast.success("Booking approved, slot booked, and synced to Google Calendar.");
       } else if (payload.calendarSyncStatus === "skipped") {
-        toast.success("Booking approved and slot booked. Calendar sync was skipped.");
+        const reason = payload.calendarSyncError ? ` Reason: ${payload.calendarSyncError}` : "";
+        toast.warning(`Booking approved and slot booked. Calendar sync skipped.${reason}`);
       } else {
-        toast.error("Booking approved and slot booked, but calendar sync failed (retry later).");
+        const reason = payload.calendarSyncError ? ` Error: ${payload.calendarSyncError}` : "";
+        toast.error(`Booking approved and slot booked, but calendar sync failed.${reason}`);
       }
 
       // Update local state to reflect approval without a full refetch
