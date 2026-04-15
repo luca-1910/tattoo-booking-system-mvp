@@ -174,7 +174,6 @@ export default function Dashboard({ onNavigate, onLogout }: DashboardProps) {
 
       setBookings(mapped);
     } catch (e: any) {
-      console.error("FETCH BOOKINGS ERROR:", e);
       toast.error(e?.message || "Failed to load booking requests.");
       setBookings([]);
     } finally {
@@ -243,7 +242,6 @@ export default function Dashboard({ onNavigate, onLogout }: DashboardProps) {
         prev.map((b) => (b.id === id ? { ...b, status: "approved" } : b)),
       );
     } catch (e: any) {
-      console.error("APPROVE ERROR:", e);
       toast.error(e?.message || "Failed to approve booking.");
     }
   };
@@ -264,7 +262,6 @@ export default function Dashboard({ onNavigate, onLogout }: DashboardProps) {
         prev.map((b) => (b.id === id ? { ...b, status: "rejected" } : b)),
       );
     } catch (e: any) {
-      console.error("REJECT ERROR:", e);
       toast.error(e?.message || "Failed to reject booking.");
     }
   };
