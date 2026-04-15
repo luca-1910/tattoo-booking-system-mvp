@@ -6,6 +6,7 @@ import {
   type CalendarSyncStatus,
 } from "@/lib/googleCalendar";
 import { supabaseServer } from "@/lib/supabaseServerClient";
+import { sendBookingApproval } from "@/lib/email";
 
 type RouteContext = {
   params: Promise<{
@@ -109,6 +110,19 @@ export async function POST(_req: NextRequest, ctx: RouteContext) {
 
   const approvalTimestamp = new Date().toISOString();
 
+  // Send approval email — non-blocking, same pattern as calendar sync.
+  if (booking.email) {
+    const emailResult = await sendBookingApproval({
+      to: booking.email,
+      clientName: booking.name ?? "Client",
+      slotStartTime: slot.start_time,
+      slotEndTime: slot.end_time,
+    });
+    if (!emailResult.sent) {
+      console.error("[approve] Approval email failed:", emailResult.error);
+    }
+  }
+
   const syncResult = await syncBookingToCalendar({
     supabase,
     booking,
@@ -142,9 +156,9 @@ async function syncBookingToCalendar({
 }): Promise<{ status: CalendarSyncStatus; eventId?: string; error?: string }> {
   const { data: artist, error: artistError } = await supabase
     .from("tattoo_artist")
-    .select("id,calendar_id,google_calendar_sync_enabled")
+    .select("artist_id,calendar_id,google_calendar_sync_enabled")
     .limit(1)
-    .maybeSingle<{ id: string; calendar_id: string | null; google_calendar_sync_enabled: boolean | null }>();
+    .maybeSingle<{ artist_id: string; calendar_id: string | null; google_calendar_sync_enabled: boolean | null }>();
 
   if (artistError) {
     const errorMessage = `Failed to read calendar settings: ${artistError.message}`;
@@ -175,7 +189,7 @@ async function syncBookingToCalendar({
       startTimeIso: slot.start_time,
       endTimeIso: slot.end_time,
     },
-    { artistId: artist.id, supabase },
+    { artistId: artist.artist_id, supabase },
   );
 
   if (syncResult.status === "synced") {

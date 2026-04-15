@@ -19,7 +19,7 @@ export async function getValidAccessToken(
     const { data: artist, error } = await supabase
       .from("tattoo_artist")
       .select("google_access_token,google_refresh_token,google_token_expiry")
-      .eq("id", artistId)
+      .eq("artist_id", artistId)
       .maybeSingle();
 
     if (error) throw new Error(`Failed to read artist tokens: ${error.message}`);
@@ -45,7 +45,7 @@ export async function getValidAccessToken(
         google_access_token: refreshed.access_token,
         google_token_expiry: refreshed.expiry,
       })
-      .eq("id", artistId);
+      .eq("artist_id", artistId);
 
     return refreshed.access_token;
   }

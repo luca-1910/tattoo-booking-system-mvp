@@ -84,7 +84,7 @@ export async function GET(req: NextRequest) {
     await dbClient
       .from("tattoo_artist")
       .upsert(
-        { auth_user_id: session.user.id, name: displayName, contact_email: session.user.email ?? null },
+        { auth_user_id: session.user.id, name: displayName, email: session.user.email ?? "", contact_email: session.user.email ?? null },
         { onConflict: "auth_user_id", ignoreDuplicates: true },
       );
 

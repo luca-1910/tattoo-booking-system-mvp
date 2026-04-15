@@ -5,6 +5,7 @@ import {
   canTransitionBookingRequestStatus,
   normalizeBookingRequestStatus,
 } from "@/lib/domain";
+import { sendBookingRejection } from "@/lib/email";
 
 type RouteContext = {
   params: Promise<{
@@ -15,6 +16,8 @@ type RouteContext = {
 type BookingRejectRow = {
   request_id: string | number;
   status: string | null;
+  name: string | null;
+  email: string | null;
 };
 
 export async function POST(_req: NextRequest, ctx: RouteContext) {
@@ -32,7 +35,7 @@ export async function POST(_req: NextRequest, ctx: RouteContext) {
 
   const { data: booking, error: bookingError } = await supabase
     .from("booking_request")
-    .select("request_id,status")
+    .select("request_id,status,name,email")
     .eq("request_id", requestId)
     .maybeSingle<BookingRejectRow>();
 
@@ -63,6 +66,17 @@ export async function POST(_req: NextRequest, ctx: RouteContext) {
 
   if (rejectError) {
     return NextResponse.json({ error: rejectError.message }, { status: 400 });
+  }
+
+  // Send rejection email — non-blocking, failure must not affect the 200 response.
+  if (booking.email) {
+    const emailResult = await sendBookingRejection({
+      to: booking.email,
+      clientName: booking.name ?? "Client",
+    });
+    if (!emailResult.sent) {
+      console.error("[reject] Rejection email failed:", emailResult.error);
+    }
   }
 
   return NextResponse.json({
