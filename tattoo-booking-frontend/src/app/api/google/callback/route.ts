@@ -42,8 +42,16 @@ export async function GET(req: NextRequest) {
           google_access_token: tokens.access_token,
           google_refresh_token: tokens.refresh_token ?? undefined,
           google_token_expiry: tokenExpiry,
+          google_calendar_sync_enabled: true,
         })
         .eq("auth_user_id", user.id);
+
+      // Default calendar_id to "primary" only when it has never been set.
+      await supabase
+        .from("tattoo_artist")
+        .update({ calendar_id: "primary" })
+        .eq("auth_user_id", user.id)
+        .is("calendar_id", null);
     }
   } catch (err) {
     console.error("Failed to persist Google tokens to DB:", err);

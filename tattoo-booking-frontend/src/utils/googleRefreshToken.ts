@@ -8,7 +8,10 @@
  *                 `tattoo_artist`, writes back after a refresh.
  *   2. Env mode — fallback to GOOGLE_* env vars (dev / backwards-compat).
  *
- * Throws if no refresh token is available or if the refresh API call fails.
+ * DB mode falls through to env mode when no refresh token is stored in the DB,
+ * so existing GOOGLE_REFRESH_TOKEN env configs continue to work unchanged.
+ *
+ * Throws if no refresh token is available anywhere or if the refresh API call fails.
  */
 export async function getValidAccessToken(
   artistId?: string,
@@ -28,26 +31,28 @@ export async function getValidAccessToken(
     const dbAccessToken: string | null = artist?.google_access_token ?? null;
     const dbExpiry: number = Number(artist?.google_token_expiry ?? 0);
 
-    if (!dbRefreshToken) {
-      throw new Error("Google Calendar is not connected. No refresh token found.");
+    if (dbRefreshToken) {
+      // Use cached access token if still valid
+      if (dbAccessToken && Date.now() < dbExpiry) {
+        return dbAccessToken;
+      }
+
+      // Refresh and persist the new token
+      const refreshed = await refreshAccessToken(dbRefreshToken);
+      await supabase
+        .from("tattoo_artist")
+        .update({
+          google_access_token: refreshed.access_token,
+          google_token_expiry: refreshed.expiry,
+        })
+        .eq("artist_id", artistId);
+
+      return refreshed.access_token;
     }
 
-    if (dbAccessToken && Date.now() < dbExpiry) {
-      return dbAccessToken;
-    }
-
-    const refreshed = await refreshAccessToken(dbRefreshToken);
-
-    // Write new token back to DB
-    await supabase
-      .from("tattoo_artist")
-      .update({
-        google_access_token: refreshed.access_token,
-        google_token_expiry: refreshed.expiry,
-      })
-      .eq("artist_id", artistId);
-
-    return refreshed.access_token;
+    // No DB refresh token — fall through to env-var fallback so existing
+    // GOOGLE_REFRESH_TOKEN env configs continue to work.
+    console.warn("[googleRefreshToken] No DB refresh token for artist, trying env fallback.");
   }
 
   // ── Env fallback (backwards-compat) ──────────────────────────────────────
@@ -64,8 +69,7 @@ export async function getValidAccessToken(
   }
 
   const refreshed = await refreshAccessToken(envRefreshToken);
-  // Note: in env-fallback mode we can't persist — caller gets a fresh token
-  // but it won't be saved. This is the legacy behaviour.
+  // Note: in env-fallback mode we can't persist the new token.
   console.warn("⚠️  Refreshed Google access token but cannot persist it (env mode). Update GOOGLE_ACCESS_TOKEN manually or switch to DB mode.");
   return refreshed.access_token;
 }

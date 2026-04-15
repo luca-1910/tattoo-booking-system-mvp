@@ -172,15 +172,12 @@ async function syncBookingToCalendar({
     return { status: "skipped", error: reason };
   }
 
-  if (!artist.calendar_id) {
-    const reason = "Google Calendar ID is not configured.";
-    await persistSyncSkipped(supabase, requestId, attemptAt, reason);
-    return { status: "skipped", error: reason };
-  }
+  // Fall back to "primary" so sync works without explicit Settings configuration.
+  const calendarId = artist.calendar_id ?? "primary";
 
   const syncResult = await createGoogleCalendarEvent(
     {
-      calendarId: artist.calendar_id,
+      calendarId: calendarId,
       requestId,
       clientName: booking.name ?? "Client",
       email: booking.email,

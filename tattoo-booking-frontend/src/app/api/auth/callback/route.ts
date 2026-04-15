@@ -89,6 +89,7 @@ export async function GET(req: NextRequest) {
       );
 
     // Save Google Calendar tokens to DB if they came back with the OAuth session.
+    // Also auto-configure sync so no manual Settings step is required.
     if (providerToken || providerRefreshToken) {
       const expiresAt = session.expires_at
         ? session.expires_at * 1000
@@ -100,8 +101,16 @@ export async function GET(req: NextRequest) {
           ...(providerToken ? { google_access_token: providerToken } : {}),
           ...(providerRefreshToken ? { google_refresh_token: providerRefreshToken } : {}),
           google_token_expiry: expiresAt,
+          google_calendar_sync_enabled: true,
         })
         .eq("auth_user_id", session.user.id);
+
+      // Default calendar_id to "primary" only when it has never been set.
+      await supabase
+        .from("tattoo_artist")
+        .update({ calendar_id: "primary" })
+        .eq("auth_user_id", session.user.id)
+        .is("calendar_id", null);
     }
   } catch (err) {
     // Non-fatal: user is still logged in; artist profile and calendar sync can be set up via Settings
