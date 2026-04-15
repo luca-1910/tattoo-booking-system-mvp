@@ -9,10 +9,38 @@ import { supabaseServer } from "@/lib/supabaseServerClient";
  * session, capture the Google provider tokens (which include calendar scopes),
  * and persist them to the tattoo_artist row so calendar sync works immediately.
  */
+
+/**
+ * Allowlist of internal paths that `next` may redirect to after login.
+ * Any value outside this set falls back to /dashboard, preventing open-redirect
+ * attacks where an attacker crafts ?next=https://evil.com.
+ */
+const ALLOWED_NEXT_PATHS = new Set([
+  "/dashboard",
+  "/calendar",
+  "/settings",
+  "/admin/login",
+]);
+
+/**
+ * Returns `path` if it is in the allowlist, otherwise returns "/dashboard".
+ * Also rejects anything that looks like an absolute URL (starts with http,
+ * https, //, or contains a colon before the first slash).
+ */
+function sanitizeNext(path: string | null): string {
+  const fallback = "/dashboard";
+  if (!path) return fallback;
+
+  // Reject absolute URLs and protocol-relative URLs
+  if (/^(https?:)?\/\//i.test(path)) return fallback;
+
+  return ALLOWED_NEXT_PATHS.has(path) ? path : fallback;
+}
+
 export async function GET(req: NextRequest) {
   const { searchParams } = req.nextUrl;
   const code = searchParams.get("code");
-  const next = searchParams.get("next") ?? "/dashboard";
+  const next = sanitizeNext(searchParams.get("next"));
 
   if (!code) {
     return NextResponse.redirect(new URL("/admin/login?error=missing_code", req.url));
@@ -31,10 +59,24 @@ export async function GET(req: NextRequest) {
   const providerToken: string | null = session.provider_token ?? null;
   const providerRefreshToken: string | null = session.provider_refresh_token ?? null;
 
-  // Save Google Calendar tokens to DB if they came back with the OAuth session.
-  // This happens when the admin signed in with Google and calendar scopes were requested.
-  if (providerToken || providerRefreshToken) {
-    try {
+  try {
+    // Ensure the artist row exists. On first sign-in this inserts a minimal row;
+    // on subsequent sign-ins ignoreDuplicates:true means existing data is left untouched.
+    const displayName: string =
+      (session.user.user_metadata?.full_name as string | undefined) ??
+      (session.user.user_metadata?.name as string | undefined) ??
+      session.user.email ??
+      "Artist";
+
+    await supabase
+      .from("tattoo_artist")
+      .upsert(
+        { auth_user_id: session.user.id, name: displayName, contact_email: session.user.email ?? null },
+        { onConflict: "auth_user_id", ignoreDuplicates: true },
+      );
+
+    // Save Google Calendar tokens to DB if they came back with the OAuth session.
+    if (providerToken || providerRefreshToken) {
       const expiresAt = session.expires_at
         ? session.expires_at * 1000
         : Date.now() + 3600 * 1000;
@@ -47,10 +89,10 @@ export async function GET(req: NextRequest) {
           google_token_expiry: expiresAt,
         })
         .eq("auth_user_id", session.user.id);
-    } catch (err) {
-      // Non-fatal: user is still logged in; calendar sync can be connected later via Settings
-      console.error("Failed to persist Google provider tokens:", err);
     }
+  } catch (err) {
+    // Non-fatal: user is still logged in; artist profile and calendar sync can be set up via Settings
+    console.error("Failed to upsert artist row or persist Google tokens:", err);
   }
 
   return NextResponse.redirect(new URL(next, req.url));
