@@ -9,7 +9,7 @@ import { startOfDayLocal, getMonthMatrix, toIsoLocal } from "@/lib/calendarUtils
 import { Button } from "./ui/button";
 import { Input } from "./ui/input";
 import { toast } from "sonner";
-import { ChevronLeft, ChevronRight, Trash2, Settings, LogOut, LayoutDashboard } from "lucide-react";
+import { ChevronLeft, ChevronRight, RefreshCw, Trash2, Settings, LogOut, LayoutDashboard } from "lucide-react";
 
 type Slot = {
   slot_id: string;
@@ -37,6 +37,7 @@ export default function CalendarPage({ onNavigate, onLogout }: CalendarPageProps
 
   const [slots, setSlots] = useState<Slot[]>([]);
   const [saving, setSaving] = useState(false);
+  const [refreshing, setRefreshing] = useState(false);
 
   // mobile tab: "calendar" | "availability"
   const [mobileTab, setMobileTab] = useState<"calendar" | "availability">("calendar");
@@ -57,12 +58,9 @@ export default function CalendarPage({ onNavigate, onLogout }: CalendarPageProps
   const [endTime, setEndTime] = useState<string>("11:00");
   const [notes, setNotes] = useState<string>("");
 
-  // fetch artist id and initial slots
-  useEffect(() => {
-    if (checking || didInitialLoad.current) return;
-    didInitialLoad.current = true;
-
-    (async () => {
+  const fetchSlots = async (showSpinner = false) => {
+    if (showSpinner) setRefreshing(true);
+    try {
       const { data: rows, error } = await supabase
         .from("slot")
         .select("*")
@@ -76,9 +74,20 @@ export default function CalendarPage({ onNavigate, onLogout }: CalendarPageProps
             status: normalizeSlotStatus(slot.status),
           })),
         );
+        if (showSpinner) toast.success("Calendar refreshed.");
       }
-    })();
-  }, [checking, supabase]);
+    } finally {
+      if (showSpinner) setRefreshing(false);
+    }
+  };
+
+  // initial load
+  useEffect(() => {
+    if (checking || didInitialLoad.current) return;
+    didInitialLoad.current = true;
+    fetchSlots();
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [checking]);
 
   const monthMatrix = useMemo(
     () => getMonthMatrix(cursor.getFullYear(), cursor.getMonth()),
@@ -284,6 +293,16 @@ export default function CalendarPage({ onNavigate, onLogout }: CalendarPageProps
             <div className="shrink-0 flex items-center justify-between mb-2">
               <div className="font-medium">{currentMonth}</div>
               <div className="flex gap-1">
+                <Button
+                  size="icon"
+                  variant="ghost"
+                  onClick={() => fetchSlots(true)}
+                  disabled={refreshing}
+                  title="Refresh calendar"
+                  className="text-neutral-400 hover:text-[#e5e5e5]"
+                >
+                  <RefreshCw className={`w-4 h-4 ${refreshing ? "animate-spin" : ""}`} />
+                </Button>
                 <Button
                   size="icon"
                   variant="ghost"
