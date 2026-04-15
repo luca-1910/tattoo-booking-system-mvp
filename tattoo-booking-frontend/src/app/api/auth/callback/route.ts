@@ -71,7 +71,7 @@ export async function GET(req: NextRequest) {
 
     // Use the service role key for the upsert so it bypasses any table-level
     // privilege gaps. Falls back to the session client if the key is absent.
-    const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
+    const serviceRoleKey = process.env.SUPABASE_SERVICE_KEY;
     const dbClient =
       serviceRoleKey
         ? createClient(

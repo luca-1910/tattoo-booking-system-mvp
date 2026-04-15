@@ -181,7 +181,7 @@ describe("GET /api/auth/callback — artist row upsert", () => {
   });
 
   it("uses createClient (service role) for the upsert when SUPABASE_SERVICE_ROLE_KEY is set", async () => {
-    vi.stubEnv("SUPABASE_SERVICE_ROLE_KEY", "service-role-secret");
+    vi.stubEnv("SUPABASE_SERVICE_KEY", "service-role-secret");
     vi.stubEnv("NEXT_PUBLIC_SUPABASE_URL", "https://proj.supabase.co");
     vi.mocked(supabaseServer).mockResolvedValue(buildSupabaseMock() as never);
 
