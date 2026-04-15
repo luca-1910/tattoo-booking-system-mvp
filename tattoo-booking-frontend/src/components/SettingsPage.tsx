@@ -56,6 +56,12 @@ export default function SettingsPage({ onNavigate, onLogout }: SettingsPageProps
   const [activeSection, setActiveSection] = useState("profile");
   const [mobileShowContent, setMobileShowContent] = useState(false);
 
+  // Onboarding state — shown when no artist row exists yet
+  const [isNewArtist, setIsNewArtist] = useState(false);
+  const [initName, setInitName] = useState("");
+  const [initEmail, setInitEmail] = useState("");
+  const [initSaving, setInitSaving] = useState(false);
+
   const navItems = [
     { id: "profile", label: "Profile", icon: <User className="w-4 h-4" /> },
     { id: "studio", label: "Studio", icon: <MapPin className="w-4 h-4" /> },
@@ -93,7 +99,13 @@ export default function SettingsPage({ onNavigate, onLogout }: SettingsPageProps
           .maybeSingle();
 
         if (error) { toast.error(error.message); return; }
-        if (!artist?.artist_id) { toast.error("No artist found in tattoo_artist."); return; }
+        if (!artist?.artist_id) {
+          // No row yet — show the first-time setup form
+          setInitName(user.user_metadata?.full_name ?? user.user_metadata?.name ?? user.email ?? "");
+          setInitEmail(user.email ?? "");
+          setIsNewArtist(true);
+          return;
+        }
 
         setArtistId(artist.artist_id);
         setIsGoogleConnected(Boolean(artist.google_refresh_token));
@@ -176,6 +188,25 @@ export default function SettingsPage({ onNavigate, onLogout }: SettingsPageProps
     });
   };
 
+  const handleCreateProfile = async () => {
+    try {
+      setInitSaving(true);
+      const res = await fetch("/api/admin/artist", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name: initName, contactEmail: initEmail }),
+      });
+      const payload = await res.json();
+      if (!res.ok) throw new Error(payload?.error || "Failed to create profile.");
+      // Row created — reload so fetchData picks up the new row
+      window.location.reload();
+    } catch (e: any) {
+      toast.error(e.message || "Failed to create profile.");
+    } finally {
+      setInitSaving(false);
+    }
+  };
+
   const handleLogout = async () => {
     const { error } = await supabase.auth.signOut();
     if (error) { toast.error("Failed to log out. Please try again."); return; }
@@ -183,7 +214,52 @@ export default function SettingsPage({ onNavigate, onLogout }: SettingsPageProps
     onLogout();
   };
 
-  if (checking) return null;
+  if (checking || loading) return null;
+
+  if (isNewArtist) {
+    return (
+      <div className="min-h-screen bg-[#0a0a0a] text-[#e5e5e5] flex items-center justify-center p-4">
+        <div className="w-full max-w-md bg-[#1a1a1a] rounded-xl border border-[rgba(255,255,255,0.1)] p-8 shadow-xl shadow-black/20">
+          <h1 className="text-xl font-semibold mb-2">Welcome — set up your profile</h1>
+          <p className="text-[#a0a0a0] text-sm mb-6">
+            No artist profile found. Enter your details below to get started.
+          </p>
+
+          <div className="space-y-4">
+            <div>
+              <Label htmlFor="init-name">Display name</Label>
+              <Input
+                id="init-name"
+                value={initName}
+                onChange={(e) => setInitName(e.target.value)}
+                placeholder="e.g. MissMay Tattoos"
+                className="mt-1 bg-[#0a0a0a] border-[rgba(255,255,255,0.1)] text-[#e5e5e5]"
+              />
+            </div>
+            <div>
+              <Label htmlFor="init-email">Contact email</Label>
+              <Input
+                id="init-email"
+                type="email"
+                value={initEmail}
+                onChange={(e) => setInitEmail(e.target.value)}
+                placeholder="you@example.com"
+                className="mt-1 bg-[#0a0a0a] border-[rgba(255,255,255,0.1)] text-[#e5e5e5]"
+              />
+            </div>
+          </div>
+
+          <Button
+            onClick={handleCreateProfile}
+            disabled={initSaving || !initName.trim()}
+            className="w-full mt-6 bg-[#a32020] hover:bg-[#c02828] text-white"
+          >
+            {initSaving ? "Creating…" : "Create profile"}
+          </Button>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="min-h-screen bg-[#0a0a0a] text-[#e5e5e5]">

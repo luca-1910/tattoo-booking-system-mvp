@@ -26,22 +26,26 @@ export async function GET() {
     const admin = isConfiguredAdmin(user);
 
     if (admin && user) {
-      // Non-blocking: ensure the artist row exists without failing the auth check.
-      const displayName: string =
-        (user.user_metadata?.full_name as string | undefined) ??
-        (user.user_metadata?.name as string | undefined) ??
-        user.email ??
-        "Artist";
+      // Ensure the artist row exists. Awaited so it completes before the
+      // response is sent — fire-and-forget can be cut short in serverless.
+      try {
+        const displayName: string =
+          (user.user_metadata?.full_name as string | undefined) ??
+          (user.user_metadata?.name as string | undefined) ??
+          user.email ??
+          "Artist";
 
-      supabase
-        .from("tattoo_artist")
-        .upsert(
-          { auth_user_id: user.id, name: displayName, contact_email: user.email ?? null },
-          { onConflict: "auth_user_id", ignoreDuplicates: true },
-        )
-        .then(({ error }) => {
-          if (error) console.error("[me] artist upsert failed:", error.message);
-        });
+        const { error } = await supabase
+          .from("tattoo_artist")
+          .upsert(
+            { auth_user_id: user.id, name: displayName, contact_email: user.email ?? null },
+            { onConflict: "auth_user_id", ignoreDuplicates: true },
+          );
+
+        if (error) console.error("[me] artist upsert failed:", error.message);
+      } catch (err) {
+        console.error("[me] artist upsert threw:", err);
+      }
     }
 
     return NextResponse.json({ isAdmin: admin });

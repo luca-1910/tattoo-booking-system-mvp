@@ -24,9 +24,7 @@ function buildSupabaseMock(user: object | null) {
       getUser: vi.fn().mockResolvedValue({ data: { user }, error: null }),
     },
     from: vi.fn().mockReturnValue({
-      upsert: vi.fn().mockReturnValue({
-        then: (cb: (result: { error: null }) => void) => { cb({ error: null }); return Promise.resolve(); },
-      }),
+      upsert: vi.fn().mockResolvedValue({ error: null }),
     }),
   };
 }
@@ -37,9 +35,7 @@ function buildSupabaseMockWithUpsertSpy(user: object | null) {
       getUser: vi.fn().mockResolvedValue({ data: { user }, error: null }),
     },
     from: vi.fn().mockReturnValue({
-      upsert: mockUpsert.mockReturnValue({
-        then: (cb: (result: { error: null }) => void) => { cb({ error: null }); return Promise.resolve(); },
-      }),
+      upsert: mockUpsert,
     }),
   };
 }
@@ -47,9 +43,7 @@ function buildSupabaseMockWithUpsertSpy(user: object | null) {
 beforeEach(() => {
   vi.clearAllMocks();
   vi.unstubAllEnvs();
-  mockUpsert.mockReturnValue({
-    then: (cb: (result: { error: null }) => void) => { cb({ error: null }); return Promise.resolve(); },
-  });
+  mockUpsert.mockResolvedValue({ error: null });
 });
 
 // ── Tests ─────────────────────────────────────────────────────────────────────
@@ -149,12 +143,7 @@ describe("GET /api/auth/me — artist lazy init", () => {
   });
 
   it("still returns isAdmin=true even when the upsert fails", async () => {
-    mockUpsert.mockReturnValue({
-      then: (cb: (result: { error: { message: string } }) => void) => {
-        cb({ error: { message: "DB error" } });
-        return Promise.resolve();
-      },
-    });
+    mockUpsert.mockResolvedValue({ error: { message: "DB error" } });
     vi.mocked(supabaseServer).mockResolvedValue(
       buildSupabaseMockWithUpsertSpy({
         id: "u1",
