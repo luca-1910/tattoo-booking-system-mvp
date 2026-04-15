@@ -12,8 +12,14 @@ vi.mock("next/headers", () => ({
   cookies: vi.fn().mockResolvedValue({ getAll: () => [], set: () => {} }),
 }));
 
+// Mock @supabase/supabase-js so we can spy on createClient (used for service role upsert)
+vi.mock("@supabase/supabase-js", () => ({
+  createClient: vi.fn(),
+}));
+
 import { GET } from "../route";
 import { supabaseServer } from "@/lib/supabaseServerClient";
+import { createClient } from "@supabase/supabase-js";
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -54,12 +60,21 @@ function makeRequest(params: Record<string, string>) {
   return new NextRequest(url);
 }
 
+function buildAdminClientMock() {
+  return {
+    from: vi.fn().mockReturnValue({ upsert: mockUpsert }),
+  };
+}
+
 beforeEach(() => {
   vi.clearAllMocks();
   // Re-apply default implementations cleared by clearAllMocks
   mockUpsert.mockResolvedValue({ error: null });
   mockEq.mockResolvedValue({ error: null });
   mockUpdate.mockReturnValue({ eq: mockEq });
+  // Default: no service role key set
+  vi.unstubAllEnvs();
+  vi.mocked(createClient).mockReturnValue(buildAdminClientMock() as never);
 });
 
 // ── Tests ─────────────────────────────────────────────────────────────────────
@@ -163,5 +178,30 @@ describe("GET /api/auth/callback — artist row upsert", () => {
     vi.mocked(supabaseServer).mockResolvedValue(buildSupabaseMock() as never);
     const res = await GET(makeRequest({ code: "valid-code" }));
     expect(new URL(res.headers.get("location")!).pathname).toBe("/dashboard");
+  });
+
+  it("uses createClient (service role) for the upsert when SUPABASE_SERVICE_ROLE_KEY is set", async () => {
+    vi.stubEnv("SUPABASE_SERVICE_ROLE_KEY", "service-role-secret");
+    vi.stubEnv("NEXT_PUBLIC_SUPABASE_URL", "https://proj.supabase.co");
+    vi.mocked(supabaseServer).mockResolvedValue(buildSupabaseMock() as never);
+
+    await GET(makeRequest({ code: "valid-code" }));
+
+    expect(createClient).toHaveBeenCalledWith(
+      "https://proj.supabase.co",
+      "service-role-secret",
+      expect.objectContaining({ auth: { persistSession: false } }),
+    );
+    expect(mockUpsert).toHaveBeenCalled();
+  });
+
+  it("falls back to the session client when SUPABASE_SERVICE_ROLE_KEY is absent", async () => {
+    // SUPABASE_SERVICE_ROLE_KEY is not set (unstubAllEnvs in beforeEach)
+    vi.mocked(supabaseServer).mockResolvedValue(buildSupabaseMock() as never);
+
+    await GET(makeRequest({ code: "valid-code" }));
+
+    expect(createClient).not.toHaveBeenCalled();
+    expect(mockUpsert).toHaveBeenCalled();
   });
 });

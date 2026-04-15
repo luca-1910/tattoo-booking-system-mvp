@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { createClient } from "@supabase/supabase-js";
 import { supabaseServer } from "@/lib/supabaseServerClient";
 
 /**
@@ -68,7 +69,19 @@ export async function GET(req: NextRequest) {
       session.user.email ??
       "Artist";
 
-    await supabase
+    // Use the service role key for the upsert so it bypasses any table-level
+    // privilege gaps. Falls back to the session client if the key is absent.
+    const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
+    const dbClient =
+      serviceRoleKey
+        ? createClient(
+            process.env.NEXT_PUBLIC_SUPABASE_URL!,
+            serviceRoleKey,
+            { auth: { persistSession: false } },
+          )
+        : supabase;
+
+    await dbClient
       .from("tattoo_artist")
       .upsert(
         { auth_user_id: session.user.id, name: displayName, contact_email: session.user.email ?? null },
