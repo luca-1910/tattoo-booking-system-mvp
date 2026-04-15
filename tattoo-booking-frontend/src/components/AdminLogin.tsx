@@ -3,13 +3,11 @@ import { supabaseBrowser } from "@/lib/supabaseBrowserClient";
 import { useState } from "react";
 import { ArrowLeft, Lock } from "lucide-react";
 import { Button } from "./ui/button";
-import { Input } from "./ui/input";
-import { Label } from "./ui/label";
 import { toast } from "sonner";
 
 interface AdminLoginProps {
   onNavigate: (page: string) => void;
-  onLogin: () => void;
+  onLogin?: () => void; // kept for RouteProvider compatibility, not used
 }
 
 function GoogleIcon() {
@@ -35,52 +33,12 @@ function GoogleIcon() {
   );
 }
 
-export function AdminLogin({ onNavigate, onLogin }: AdminLoginProps) {
-  const [email, setEmail] = useState("");
-  const [password, setPassword] = useState("");
+export function AdminLogin({ onNavigate }: AdminLoginProps) {
   const [loading, setLoading] = useState(false);
-  const [googleLoading, setGoogleLoading] = useState(false);
   const supabase = supabaseBrowser();
 
-  const handleLogin = async (e: React.FormEvent) => {
-    e.preventDefault();
-    setLoading(true);
-    try {
-      const { error } = await supabase.auth.signInWithPassword({
-        email,
-        password,
-      });
-      if (error) return toast.error(error.message || "Sign in failed");
-
-      const {
-        data: { user },
-      } = await supabase.auth.getUser();
-      if (!user) return toast.error("No active session. Please try again.");
-
-      const allowedEmail = process.env.NEXT_PUBLIC_ADMIN_EMAIL;
-      const allowedUid = process.env.NEXT_PUBLIC_ADMIN_UID;
-
-      const emailOk = allowedEmail ? user.email === allowedEmail : true;
-      const uidOk = allowedUid ? user.id === allowedUid : true;
-
-      if (!(emailOk && uidOk)) {
-        await supabase.auth.signOut();
-        return toast.error("Unauthorized account.");
-      }
-
-      toast.success("Login successful!");
-      onLogin?.();
-      onNavigate("dashboard");
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    } catch (err: any) {
-      toast.error(err?.message ?? "Unexpected error");
-    } finally {
-      setLoading(false);
-    }
-  };
-
   const handleGoogleSignIn = async () => {
-    setGoogleLoading(true);
+    setLoading(true);
     try {
       const { error } = await supabase.auth.signInWithOAuth({
         provider: "google",
@@ -96,13 +54,16 @@ export function AdminLogin({ onNavigate, onLogin }: AdminLoginProps) {
           redirectTo: `${window.location.origin}/api/auth/callback`,
         },
       });
-      if (error) toast.error(error.message || "Google sign-in failed");
+      if (error) {
+        toast.error(error.message || "Google sign-in failed");
+        setLoading(false);
+      }
+      // On success the browser redirects — no need to reset loading
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     } catch (err: any) {
       toast.error(err?.message ?? "Unexpected error");
-      setGoogleLoading(false);
+      setLoading(false);
     }
-    // Note: don't reset googleLoading — the page will redirect
   };
 
   return (
@@ -126,70 +87,19 @@ export function AdminLogin({ onNavigate, onLogin }: AdminLoginProps) {
 
           <h2 className="text-center mb-2">Admin Login</h2>
           <p className="text-center text-[#a0a0a0] mb-8">
-            Access your artist dashboard
+            Sign in with your Google account to access the dashboard
           </p>
 
-          {/* Google Sign-In */}
           <Button
             type="button"
             variant="outline"
             onClick={handleGoogleSignIn}
-            disabled={googleLoading || loading}
-            className="w-full mb-6 bg-[#0a0a0a] border-[rgba(255,255,255,0.15)] text-[#e5e5e5] hover:bg-[#222] hover:border-[rgba(255,255,255,0.3)] flex items-center justify-center gap-3"
+            disabled={loading}
+            className="w-full bg-[#0a0a0a] border-[rgba(255,255,255,0.15)] text-[#e5e5e5] hover:bg-[#222] hover:border-[rgba(255,255,255,0.3)] flex items-center justify-center gap-3"
           >
             <GoogleIcon />
-            {googleLoading ? "Redirecting…" : "Sign in with Google"}
+            {loading ? "Redirecting…" : "Sign in with Google"}
           </Button>
-
-          {/* Divider */}
-          <div className="relative mb-6">
-            <div className="absolute inset-0 flex items-center">
-              <div className="w-full border-t border-[rgba(255,255,255,0.1)]" />
-            </div>
-            <div className="relative flex justify-center text-xs">
-              <span className="bg-[#1a1a1a] px-3 text-[#a0a0a0]">or sign in with email</span>
-            </div>
-          </div>
-
-          <form onSubmit={handleLogin} className="space-y-6">
-            <div>
-              <Label htmlFor="email">Email Address</Label>
-              <Input
-                id="email"
-                type="email"
-                value={email}
-                onChange={(e) => setEmail(e.target.value)}
-                placeholder="admin@missmay.com"
-                className="mt-2 bg-[#0a0a0a] border-[rgba(255,255,255,0.1)] text-[#e5e5e5]"
-                required
-              />
-            </div>
-
-            <div>
-              <Label htmlFor="password">Password</Label>
-              <Input
-                id="password"
-                type="password"
-                value={password}
-                onChange={(e) => setPassword(e.target.value)}
-                placeholder="••••••••"
-                className="mt-2 bg-[#0a0a0a] border-[rgba(255,255,255,0.1)] text-[#e5e5e5]"
-                required
-              />
-            </div>
-
-            <Button
-              type="submit"
-              disabled={loading || googleLoading}
-              className="w-full bg-[#a32020] hover:bg-[#8a1b1b] text-white"
-            >
-             {loading ? "Signing in…" : "Sign In"}
-            </Button>
-          </form>
-
-          <p className="mt-6 text-center text-[#a0a0a0]">
-            Forgot your password? Contact support
-          </p>
         </div>
       </div>
     </div>
