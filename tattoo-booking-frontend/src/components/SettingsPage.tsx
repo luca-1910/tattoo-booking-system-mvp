@@ -2,30 +2,75 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { ArrowLeft, User, Palette, Save, Calendar as CalendarIcon } from "lucide-react";
+import { useSearchParams } from "next/navigation";
+import { User, Palette, Save, Calendar as CalendarIcon, MapPin, Share2, LayoutDashboard, LogOut, ChevronRight, ArrowLeft, CheckCircle2, XCircle, BookOpen } from "lucide-react";
 import { useRequireAdmin } from "@/hooks/useRequireAdmin";
 import { supabaseBrowser } from "@/lib/supabaseBrowserClient";
 import { Button } from "./ui/button";
 import { Input } from "./ui/input";
 import { Label } from "./ui/label";
-import { Switch } from "./ui/switch";
 import { toast } from "sonner";
+import { ImageUploader } from "./ImageUploader";
+import { TutorialModal } from "./TutorialModal";
 
-export default function SettingsPage() {
+interface SettingsPageProps {
+  onNavigate: (page: string) => void;
+  onLogout: () => void;
+}
+
+export default function SettingsPage({ onNavigate, onLogout }: SettingsPageProps) {
   const checking = useRequireAdmin();
   const supabase = supabaseBrowser();
+  const searchParams = useSearchParams();
 
-  // Artist state
+  // Artist identity
   const [artistId, setArtistId] = useState<string | null>(null);
   const [artistName, setArtistName] = useState("");
+  const [tagline, setTagline] = useState("");
+  const [contactEmail, setContactEmail] = useState("");
+  const [phone, setPhone] = useState("");
+
+  // Calendar
   const [calendarId, setCalendarId] = useState("");
-  const [googleCalendarSyncEnabled, setGoogleCalendarSyncEnabled] = useState(false);
+  const [isGoogleConnected, setIsGoogleConnected] = useState(false);
+  const [isGoogleUser, setIsGoogleUser] = useState(false);
+
+  // Studio location & hours
+  const [addressStreet, setAddressStreet] = useState("");
+  const [addressCity, setAddressCity] = useState("");
+  const [hoursWeekday, setHoursWeekday] = useState("");
+  const [hoursWeekend, setHoursWeekend] = useState("");
+
+  // Social & links
+  const [instagramUrl, setInstagramUrl] = useState("");
+  const [shopUrl, setShopUrl] = useState("");
+
+  // Landing page images
+  const [heroImageUrl, setHeroImageUrl] = useState("");
+  const [portfolioImages, setPortfolioImages] = useState<[string, string, string]>(["", "", ""]);
 
   // UI state
   const [authEmail, setAuthEmail] = useState("");
-  const [appearance, setAppearance] = useState({ darkMode: true });
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+  const [activeSection, setActiveSection] = useState("profile");
+  const [mobileShowContent, setMobileShowContent] = useState(false);
+  const [showTutorial, setShowTutorial] = useState(false);
+
+  // Onboarding state — shown when no artist row exists yet
+  const [isNewArtist, setIsNewArtist] = useState(false);
+  const [initName, setInitName] = useState("");
+  const [initEmail, setInitEmail] = useState("");
+  const [initSaving, setInitSaving] = useState(false);
+
+  const navItems = [
+    { id: "profile", label: "Profile", icon: <User className="w-4 h-4" /> },
+    { id: "studio", label: "Studio", icon: <MapPin className="w-4 h-4" /> },
+    { id: "social", label: "Social & Links", icon: <Share2 className="w-4 h-4" /> },
+    { id: "images", label: "Landing Images", icon: <Palette className="w-4 h-4" /> },
+    { id: "calendar", label: "Calendar", icon: <CalendarIcon className="w-4 h-4" /> },
+    { id: "tutorial", label: "Tutorial", icon: <BookOpen className="w-4 h-4" /> },
+  ];
 
   useEffect(() => {
     if (checking) return;
@@ -34,45 +79,53 @@ export default function SettingsPage() {
       try {
         setLoading(true);
 
-        // Auth email (display only)
         const { data: userRes, error: userErr } = await supabase.auth.getUser();
-        if (userErr) {
-          toast.error(userErr.message);
-          return;
-        }
+        if (userErr) { toast.error(userErr.message); return; }
 
         const user = userRes?.user;
-        if (!user) {
-          toast.error("No active session.");
-          return;
-        }
+        if (!user) { toast.error("No active session."); return; }
 
-        if (user.email) {
-          setAuthEmail(user.email);
-        }
+        if (user.email) setAuthEmail(user.email);
+        setIsGoogleUser(user.app_metadata?.provider === "google");
 
-        // Fetch the artist tied to the logged-in auth user.
         const { data: artist, error } = await supabase
           .from("tattoo_artist")
-          .select("artist_id, name, calendar_id, google_calendar_sync_enabled")
+          .select(`
+            artist_id, name, calendar_id, google_calendar_sync_enabled,
+            tagline, contact_email, phone,
+            address_street, address_city, hours_weekday, hours_weekend,
+            instagram_url, shop_url, hero_image_url, portfolio_images,
+            google_refresh_token
+          `)
           .eq("auth_user_id", user.id)
           .maybeSingle();
 
-        if (error) {
-          toast.error(error.message);
-          return;
-        }
-
+        if (error) { toast.error(error.message); return; }
         if (!artist?.artist_id) {
-          toast.error("No artist found in tattoo_artist.");
+          // No row yet — show the first-time setup form
+          setInitName(user.user_metadata?.full_name ?? user.user_metadata?.name ?? user.email ?? "");
+          setInitEmail(user.email ?? "");
+          setIsNewArtist(true);
           return;
         }
 
-        // Hydrate state
         setArtistId(artist.artist_id);
+        setIsGoogleConnected(Boolean(artist.google_refresh_token));
         setArtistName(artist.name ?? "");
         setCalendarId(artist.calendar_id ?? "");
-        setGoogleCalendarSyncEnabled(Boolean(artist.google_calendar_sync_enabled));
+        setTagline(artist.tagline ?? "");
+        setContactEmail(artist.contact_email ?? "");
+        setPhone(artist.phone ?? "");
+        setAddressStreet(artist.address_street ?? "");
+        setAddressCity(artist.address_city ?? "");
+        setHoursWeekday(artist.hours_weekday ?? "");
+        setHoursWeekend(artist.hours_weekend ?? "");
+        setInstagramUrl(artist.instagram_url ?? "");
+        setShopUrl(artist.shop_url ?? "");
+        setHeroImageUrl(artist.hero_image_url ?? "");
+
+        const imgs = Array.isArray(artist.portfolio_images) ? artist.portfolio_images : [];
+        setPortfolioImages([imgs[0] ?? "", imgs[1] ?? "", imgs[2] ?? ""]);
       } finally {
         setLoading(false);
       }
@@ -81,11 +134,20 @@ export default function SettingsPage() {
     fetchData();
   }, [checking, supabase]);
 
-  const handleSave = async () => {
-    if (!artistId) {
-      toast.error("Artist not loaded yet.");
-      return;
+  // Show toast when redirected back after Google Calendar OAuth
+  useEffect(() => {
+    const googleParam = searchParams.get("google");
+    if (googleParam === "connected") {
+      setIsGoogleConnected(true);
+      toast.success("Google Calendar connected successfully.");
+    } else if (googleParam === "error") {
+      const reason = searchParams.get("reason");
+      toast.error(reason === "db_write" ? "Connected but failed to save tokens. Try again." : "Google Calendar connection failed. Please try again.");
     }
+  }, [searchParams]);
+
+  const handleSave = async () => {
+    if (!artistId) { toast.error("Artist not loaded yet."); return; }
 
     try {
       setSaving(true);
@@ -95,12 +157,21 @@ export default function SettingsPage() {
         .update({
           name: artistName,
           calendar_id: calendarId,
-          google_calendar_sync_enabled: googleCalendarSyncEnabled,
+          tagline,
+          contact_email: contactEmail,
+          phone,
+          address_street: addressStreet,
+          address_city: addressCity,
+          hours_weekday: hoursWeekday,
+          hours_weekend: hoursWeekend,
+          instagram_url: instagramUrl,
+          shop_url: shopUrl,
+          hero_image_url: heroImageUrl,
+          portfolio_images: portfolioImages.filter(Boolean),
         })
         .eq("artist_id", artistId);
 
       if (error) throw error;
-
       toast.success("Settings saved.");
     } catch (e: any) {
       toast.error(e.message || "Failed to save settings.");
@@ -109,150 +180,362 @@ export default function SettingsPage() {
     }
   };
 
-  if (checking) return null;
+  const updatePortfolioImage = (index: number, value: string) => {
+    setPortfolioImages((prev) => {
+      const next: [string, string, string] = [...prev] as [string, string, string];
+      next[index] = value;
+      return next;
+    });
+  };
 
-  return (
-    <div className="min-h-screen bg-[#0a0a0a] text-[#e5e5e5] py-8 px-4">
-      <div className="max-w-4xl mx-auto">
-        <div className="mb-8">
-          <Button
-            variant="ghost"
-            onClick={() => history.back()}
-            className="mb-4 text-[#e5e5e5] hover:text-[#a32020]"
-          >
-            <ArrowLeft className="w-4 h-4 mr-2" />
-            Back
-          </Button>
-          <h1 className="text-3xl font-semibold">Settings</h1>
-        </div>
+  const handleCreateProfile = async () => {
+    try {
+      setInitSaving(true);
+      const res = await fetch("/api/admin/artist", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name: initName, contactEmail: initEmail }),
+      });
+      const payload = await res.json();
+      if (!res.ok) throw new Error(payload?.error || "Failed to create profile.");
+      localStorage.setItem("pending_tutorial", "1");
+      onNavigate("dashboard");
+    } catch (e: any) {
+      toast.error(e.message || "Failed to create profile.");
+    } finally {
+      setInitSaving(false);
+    }
+  };
 
-        {loading ? (
-          <p className="text-[#a0a0a0]">Loading settings…</p>
-        ) : (
-          <div className="space-y-6">
-            {/* Profile */}
-            <div className="bg-[#1a1a1a] rounded-lg p-6 border border-[rgba(255,255,255,0.1)]">
-              <div className="flex items-center gap-3 mb-6">
-                <div className="w-10 h-10 bg-[#a32020]/10 rounded-lg flex items-center justify-center">
-                  <User className="w-5 h-5 text-[#a32020]" />
-                </div>
-                <h2 className="text-xl font-medium">Profile Information</h2>
-              </div>
+  const handleLogout = async () => {
+    const { error } = await supabase.auth.signOut();
+    if (error) { toast.error("Failed to log out. Please try again."); return; }
+    toast.success("Logged out successfully");
+    onLogout();
+  };
 
-              <div className="space-y-4">
-                <div>
-                  <Label htmlFor="artist-name">Artist Name</Label>
-                  <Input
-                    id="artist-name"
-                    value={artistName}
-                    onChange={(e) => setArtistName(e.target.value)}
-                    className="mt-2 bg-[#0a0a0a] border-[rgba(255,255,255,0.1)] text-[#e5e5e5]"
-                  />
-                </div>
+  if (checking || loading) return null;
 
-                <div>
-                  <Label htmlFor="email">Email (from Auth)</Label>
-                  <Input
-                    id="email"
-                    type="email"
-                    value={authEmail}
-                    readOnly
-                    className="mt-2 bg-[#0a0a0a] border-[rgba(255,255,255,0.1)] text-[#a0a0a0] cursor-not-allowed"
-                  />
-                </div>
+  if (isNewArtist) {
+    return (
+      <div className="min-h-screen bg-[#0a0a0a] text-[#e5e5e5] flex items-center justify-center p-4">
+        <div className="w-full max-w-md bg-[#1a1a1a] rounded-xl border border-[rgba(255,255,255,0.1)] p-8 shadow-xl shadow-black/20">
+          <h1 className="text-xl font-semibold mb-2">Welcome — set up your profile</h1>
+          <p className="text-[#a0a0a0] text-sm mb-6">
+            No artist profile found. Enter your details below to get started.
+          </p>
 
-                <Button
-                  onClick={handleSave}
-                  disabled={saving}
-                  className="bg-[#a32020] hover:bg-[#8a1b1b] text-white"
-                >
-                  <Save className="w-4 h-4 mr-2" />
-                  {saving ? "Saving…" : "Save Profile"}
-                </Button>
-              </div>
+          <div className="space-y-4">
+            <div>
+              <Label htmlFor="init-name">Display name</Label>
+              <Input
+                id="init-name"
+                value={initName}
+                onChange={(e) => setInitName(e.target.value)}
+                placeholder="e.g. MissMay Tattoos"
+                className="mt-1 bg-[#0a0a0a] border-[rgba(255,255,255,0.1)] text-[#e5e5e5]"
+              />
             </div>
-
-            {/* Calendar */}
-            <div className="bg-[#1a1a1a] rounded-lg p-6 border border-[rgba(255,255,255,0.1)]">
-              <div className="flex items-center gap-3 mb-6">
-                <div className="w-10 h-10 bg-[#a32020]/10 rounded-lg flex items-center justify-center">
-                  <CalendarIcon className="w-5 h-5 text-[#a32020]" />
-                </div>
-                <h2 className="text-xl font-medium">Calendar</h2>
-              </div>
-
-              <div className="space-y-4">
-                <div>
-                  <Label htmlFor="calendar-id">Google Calendar ID</Label>
-                  <Input
-                    id="calendar-id"
-                    placeholder="primary or name@domain.com"
-                    value={calendarId}
-                    onChange={(e) => setCalendarId(e.target.value)}
-                    className="mt-2 bg-[#0a0a0a] border-[rgba(255,255,255,0.1)] text-[#e5e5e5]"
-                  />
-                </div>
-
-                <div className="flex items-center justify-between p-4 bg-[#0a0a0a] rounded-lg">
-                  <div>
-                    <p className="text-[#e5e5e5]">Enable Google Calendar Sync</p>
-                    <p className="text-[#a0a0a0]">
-                      When enabled, approved bookings are pushed to your calendar.
-                    </p>
-                  </div>
-                  <Switch
-                    checked={googleCalendarSyncEnabled}
-                    onCheckedChange={setGoogleCalendarSyncEnabled}
-                  />
-                </div>
-
-                <Button
-                  onClick={handleSave}
-                  disabled={saving}
-                  className="bg-[#a32020] hover:bg-[#8a1b1b] text-white"
-                >
-                  <Save className="w-4 h-4 mr-2" />
-                  {saving ? "Saving…" : "Save Calendar Settings"}
-                </Button>
-              </div>
-            </div>
-
-            {/* Appearance (UI only) */}
-            <div className="bg-[#1a1a1a] rounded-lg p-6 border border-[rgba(255,255,255,0.1)]">
-              <div className="flex items-center gap-3 mb-6">
-                <div className="w-10 h-10 bg-[#a32020]/10 rounded-lg flex items-center justify-center">
-                  <Palette className="w-5 h-5 text-[#a32020]" />
-                </div>
-                <h2 className="text-xl font-medium">Appearance</h2>
-              </div>
-
-              <div className="flex items-center justify-between p-4 bg-[#0a0a0a] rounded-lg">
-                <div>
-                  <p className="text-[#e5e5e5]">Dark Mode</p>
-                  <p className="text-[#a0a0a0]">Use dark theme across the app</p>
-                </div>
-                <Switch
-                  checked={appearance.darkMode}
-                  onCheckedChange={() =>
-                    setAppearance((p) => ({ ...p, darkMode: !p.darkMode }))
-                  }
-                />
-              </div>
-            </div>
-
-            <div className="flex justify-end">
-              <Button
-                onClick={handleSave}
-                disabled={saving}
-                className="bg-[#a32020] hover:bg-[#8a1b1b] text-white"
-              >
-                <Save className="w-4 h-4 mr-2" />
-                {saving ? "Saving…" : "Save Changes"}
-              </Button>
+            <div>
+              <Label htmlFor="init-email">Contact email</Label>
+              <Input
+                id="init-email"
+                type="email"
+                value={initEmail}
+                onChange={(e) => setInitEmail(e.target.value)}
+                placeholder="you@example.com"
+                className="mt-1 bg-[#0a0a0a] border-[rgba(255,255,255,0.1)] text-[#e5e5e5]"
+              />
             </div>
           </div>
-        )}
+
+          <Button
+            onClick={handleCreateProfile}
+            disabled={initSaving || !initName.trim()}
+            className="w-full mt-6 bg-[#a32020] hover:bg-[#c02828] text-white"
+          >
+            {initSaving ? "Creating…" : "Create profile"}
+          </Button>
+        </div>
       </div>
+    );
+  }
+
+  return (
+    <>
+    <div className="min-h-screen bg-[#0a0a0a] text-[#e5e5e5]">
+      {/* Top Navigation */}
+      <div className="border-b border-[rgba(255,255,255,0.1)] bg-[#1a1a1a] sticky top-0 z-50 shadow-lg shadow-black/20">
+        <div className="max-w-7xl mx-auto px-4 py-4 flex items-center justify-between">
+          <h1>Settings</h1>
+          <div className="flex gap-2 sm:gap-3">
+            <Button
+              variant="ghost"
+              size="icon"
+              onClick={() => onNavigate("dashboard")}
+              className="text-[#e5e5e5] hover:text-[#a32020] hover:bg-[#a32020]/10 sm:w-auto sm:px-4"
+            >
+              <LayoutDashboard className="w-5 h-5" />
+              <span className="hidden sm:inline ml-2">Dashboard</span>
+            </Button>
+            <Button
+              variant="ghost"
+              size="icon"
+              onClick={() => onNavigate("calendar")}
+              className="text-[#e5e5e5] hover:text-[#a32020] hover:bg-[#a32020]/10 sm:w-auto sm:px-4"
+            >
+              <CalendarIcon className="w-5 h-5" />
+              <span className="hidden sm:inline ml-2">Calendar</span>
+            </Button>
+            <Button
+              variant="ghost"
+              size="icon"
+              onClick={handleLogout}
+              className="text-[#e5e5e5] hover:text-[#a32020] hover:bg-[#a32020]/10 sm:w-auto sm:px-4"
+            >
+              <LogOut className="w-5 h-5" />
+              <span className="hidden sm:inline ml-2">Logout</span>
+            </Button>
+          </div>
+        </div>
+      </div>
+
+      <div className="max-w-6xl mx-auto py-8 px-4 md:flex md:gap-8">
+        {/* Sidebar — always visible on md+, hidden on mobile when content is shown */}
+        <aside className={`md:w-48 md:shrink-0 ${mobileShowContent ? "hidden md:block" : "block"}`}>
+          <nav className="flex flex-col gap-1">
+            {navItems.map((item) => (
+              <button
+                key={item.id}
+                onClick={() => { setActiveSection(item.id); setMobileShowContent(true); }}
+                className={`flex items-center justify-between gap-3 px-3 py-3 md:py-2.5 rounded-lg text-sm text-left transition-colors ${
+                  activeSection === item.id && mobileShowContent
+                    ? "bg-[#a32020]/15 text-[#e5e5e5] font-medium"
+                    : "text-[#a0a0a0] hover:bg-[#1a1a1a] hover:text-[#e5e5e5]"
+                }`}
+              >
+                <span className="flex items-center gap-3">
+                  {item.icon}
+                  {item.label}
+                </span>
+                <ChevronRight className="w-4 h-4 md:hidden opacity-40" />
+              </button>
+            ))}
+          </nav>
+        </aside>
+
+        {/* Content — always visible on md+, only shown on mobile when drilled in */}
+        <div className={`flex-1 min-w-0 ${mobileShowContent ? "block" : "hidden md:block"}`}>
+          {/* Mobile back button */}
+          <button
+            onClick={() => setMobileShowContent(false)}
+            className="md:hidden flex items-center gap-2 text-sm text-[#a0a0a0] hover:text-[#e5e5e5] mb-4 transition-colors"
+          >
+            <ArrowLeft className="w-4 h-4" />
+            Back
+          </button>
+          {loading ? (
+            <p className="text-[#a0a0a0]">Loading settings…</p>
+          ) : (
+            <>
+              {activeSection === "profile" && (
+                <Section icon={<User />} title="Profile Information">
+                  <Field label="Artist Name">
+                    <Input value={artistName} onChange={(e) => setArtistName(e.target.value)} className={inputCls} />
+                  </Field>
+                  <Field label="Tagline" hint="Shown as the subtitle on the landing page">
+                    <Input value={tagline} placeholder="Fine line artistry. Dark minimalism." onChange={(e) => setTagline(e.target.value)} className={inputCls} />
+                  </Field>
+                  <Field label="Public Contact Email">
+                    <Input type="email" value={contactEmail} placeholder="hello@yourstudio.com" onChange={(e) => setContactEmail(e.target.value)} className={inputCls} />
+                  </Field>
+                  <Field label="Phone">
+                    <Input value={phone} placeholder="+1 (555) 123-4567" onChange={(e) => setPhone(e.target.value)} className={inputCls} />
+                  </Field>
+                  <Field label="Auth Email (read-only)">
+                    <Input type="email" value={authEmail} readOnly className={`${inputCls} text-[#a0a0a0] cursor-not-allowed`} />
+                  </Field>
+                </Section>
+              )}
+
+              {activeSection === "studio" && (
+                <Section icon={<MapPin />} title="Studio Location & Hours">
+                  <Field label="Street Address">
+                    <Input value={addressStreet} placeholder="123 Ink Street" onChange={(e) => setAddressStreet(e.target.value)} className={inputCls} />
+                  </Field>
+                  <Field label="City / State">
+                    <Input value={addressCity} placeholder="Brooklyn, NY 11211" onChange={(e) => setAddressCity(e.target.value)} className={inputCls} />
+                  </Field>
+                  <Field label="Weekday Hours">
+                    <Input value={hoursWeekday} placeholder="Tue - Sat: 11AM - 7PM" onChange={(e) => setHoursWeekday(e.target.value)} className={inputCls} />
+                  </Field>
+                  <Field label="Weekend / Closed Days">
+                    <Input value={hoursWeekend} placeholder="Sun - Mon: Closed" onChange={(e) => setHoursWeekend(e.target.value)} className={inputCls} />
+                  </Field>
+                </Section>
+              )}
+
+              {activeSection === "social" && (
+                <Section icon={<Share2 />} title="Social & Links">
+                  <Field label="Instagram URL">
+                    <Input value={instagramUrl} placeholder="https://instagram.com/yourstudio" onChange={(e) => setInstagramUrl(e.target.value)} className={inputCls} />
+                  </Field>
+                  <Field label="Shop URL">
+                    <Input value={shopUrl} placeholder="https://shop.yourstudio.com" onChange={(e) => setShopUrl(e.target.value)} className={inputCls} />
+                  </Field>
+                </Section>
+              )}
+
+              {activeSection === "images" && (
+                <Section icon={<Palette />} title="Landing Page Images">
+                  <Field
+                    label="Hero Background"
+                    hint="Wide banner shown at the top of the landing page. Drag to reposition, use the zoom slider to fit."
+                  >
+                    <ImageUploader
+                      value={heroImageUrl}
+                      onChange={setHeroImageUrl}
+                      storagePath={`hero/${artistId ?? "default"}`}
+                      aspectRatio={16 / 7}
+                      previewClassName="h-44 mt-2"
+                    />
+                  </Field>
+
+                  <div className="border-t border-[rgba(255,255,255,0.06)] pt-4">
+                    <p className="text-sm text-[#a0a0a0] mb-4">Portfolio images — shown in the "Recent Work" grid (square crop).</p>
+                    <div className="grid grid-cols-3 gap-3">
+                      {([0, 1, 2] as const).map((i) => (
+                        <div key={i}>
+                          <p className="text-xs text-[#a0a0a0] mb-1">Image {i + 1}</p>
+                          <ImageUploader
+                            value={portfolioImages[i]}
+                            onChange={(url) => updatePortfolioImage(i, url)}
+                            storagePath={`portfolio/${artistId ?? "default"}`}
+                            aspectRatio={1}
+                            previewClassName="h-28"
+                          />
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                </Section>
+              )}
+
+              {activeSection === "tutorial" && (
+                <Section icon={<BookOpen />} title="Tutorial">
+                  <p className="text-[#a0a0a0] text-sm">
+                    Replay the onboarding walkthrough at any time to get a refresher on the key features.
+                  </p>
+                  <Button
+                    type="button"
+                    onClick={() => setShowTutorial(true)}
+                    className="mt-2 bg-[#a32020] hover:bg-[#8a1b1b] text-white"
+                  >
+                    <BookOpen className="w-4 h-4 mr-2" />
+                    Start Tutorial
+                  </Button>
+                </Section>
+              )}
+
+              {activeSection === "calendar" && (
+                <Section icon={<CalendarIcon />} title="Calendar">
+                  {/* Connection status + single action button */}
+                  <div className="flex items-center justify-between p-4 bg-[#0a0a0a] rounded-lg">
+                    <div>
+                      <p className="text-[#e5e5e5] font-medium">Google Calendar</p>
+                      <p className="text-[#a0a0a0] text-sm">
+                        {isGoogleConnected
+                          ? "Connected — approved bookings sync automatically"
+                          : "Not connected — click below to grant access"}
+                      </p>
+                    </div>
+                    {isGoogleConnected ? (
+                      <span className="flex items-center gap-1.5 text-sm text-emerald-400">
+                        <CheckCircle2 className="w-4 h-4" />
+                        Connected
+                      </span>
+                    ) : (
+                      <span className="flex items-center gap-1.5 text-sm text-red-400">
+                        <XCircle className="w-4 h-4" />
+                        Not connected
+                      </span>
+                    )}
+                  </div>
+
+                  <a href="/api/google/start" className="block">
+                    <Button
+                      type="button"
+                      variant="outline"
+                      className="w-full bg-[#0a0a0a] border-[rgba(255,255,255,0.15)] text-[#e5e5e5] hover:bg-[#222] hover:border-[rgba(255,255,255,0.3)]"
+                    >
+                      {isGoogleConnected ? "Re-authorise Google Calendar" : "Connect Google Calendar"}
+                    </Button>
+                  </a>
+
+                </Section>
+              )}
+
+<div className="flex justify-end mt-6 pb-8">
+                <Button
+                  onClick={handleSave}
+                  disabled={saving}
+                  className="bg-[#a32020] hover:bg-[#8a1b1b] text-white px-8"
+                >
+                  <Save className="w-4 h-4 mr-2" />
+                  {saving ? "Saving…" : "Save All Changes"}
+                </Button>
+              </div>
+            </>
+          )}
+        </div>
+      </div>
+    </div>
+
+    <TutorialModal open={showTutorial} onClose={() => setShowTutorial(false)} />
+    </>
+  );
+}
+
+// ── Shared helpers ────────────────────────────────────────────────────────────
+
+const inputCls = "mt-1 bg-[#0a0a0a] border-[rgba(255,255,255,0.1)] text-[#e5e5e5]";
+
+function Section({
+  icon,
+  title,
+  children,
+}: {
+  icon: React.ReactNode;
+  title: string;
+  children: React.ReactNode;
+}) {
+  return (
+    <div className="bg-[#1a1a1a] rounded-lg p-6 border border-[rgba(255,255,255,0.1)]">
+      <div className="flex items-center gap-3 mb-6">
+        <div className="w-10 h-10 bg-[#a32020]/10 rounded-lg flex items-center justify-center text-[#a32020]">
+          {icon}
+        </div>
+        <h2 className="text-xl font-medium">{title}</h2>
+      </div>
+      <div className="space-y-4">{children}</div>
+    </div>
+  );
+}
+
+function Field({
+  label,
+  hint,
+  children,
+}: {
+  label: string;
+  hint?: string;
+  children: React.ReactNode;
+}) {
+  return (
+    <div>
+      <Label>{label}</Label>
+      {hint && <p className="text-[#a0a0a0] text-xs mt-0.5 mb-1">{hint}</p>}
+      {children}
     </div>
   );
 }

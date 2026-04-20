@@ -1,11 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import { isConfiguredAdmin } from "@/lib/adminAuth";
-import {
-  APP_CALENDAR_SOURCE,
-  createGoogleCalendarEvent,
-  type CalendarSyncStatus,
-} from "@/lib/googleCalendar";
 import { supabaseServer } from "@/lib/supabaseServerClient";
+import { sendBookingApproval } from "@/lib/email";
+import { syncBookingToCalendar, type SyncResult } from "@/lib/calendarSyncHelpers";
 
 type RouteContext = {
   params: Promise<{
@@ -30,7 +27,6 @@ type SlotRow = {
   end_time: string;
 };
 
-type SupabaseServerClient = Awaited<ReturnType<typeof supabaseServer>>;
 type ApprovalRpcResult = { ok: boolean; code: string; message: string };
 
 export async function POST(_req: NextRequest, ctx: RouteContext) {
@@ -107,15 +103,20 @@ export async function POST(_req: NextRequest, ctx: RouteContext) {
     );
   }
 
-  const approvalTimestamp = new Date().toISOString();
+  // Send approval email — non-blocking, same pattern as calendar sync.
+  if (booking.email) {
+    const emailResult = await sendBookingApproval({
+      to: booking.email,
+      clientName: booking.name ?? "Client",
+      slotStartTime: slot.start_time,
+      slotEndTime: slot.end_time,
+    });
+    if (!emailResult.sent) {
+      console.error("[approve] Approval email failed:", emailResult.error);
+    }
+  }
 
-  const syncResult = await syncBookingToCalendar({
-    supabase,
-    booking,
-    slot,
-    requestId,
-    attemptAt: approvalTimestamp,
-  });
+  const syncResult: SyncResult = await syncBookingToCalendar({ supabase, booking, slot });
 
   return NextResponse.json({
     ok: true,
@@ -125,114 +126,4 @@ export async function POST(_req: NextRequest, ctx: RouteContext) {
     calendarEventId: syncResult.eventId ?? null,
     calendarSyncError: syncResult.error ?? null,
   });
-}
-
-async function syncBookingToCalendar({
-  supabase,
-  booking,
-  slot,
-  requestId,
-  attemptAt,
-}: {
-  supabase: SupabaseServerClient;
-  booking: BookingApprovalRow;
-  slot: SlotRow;
-  requestId: string;
-  attemptAt: string;
-}): Promise<{ status: CalendarSyncStatus; eventId?: string; error?: string }> {
-  const { data: artist, error: artistError } = await supabase
-    .from("tattoo_artist")
-    .select("calendar_id,google_calendar_sync_enabled")
-    .limit(1)
-    .maybeSingle<{ calendar_id: string | null; google_calendar_sync_enabled: boolean | null }>();
-
-  if (artistError) {
-    const errorMessage = `Failed to read calendar settings: ${artistError.message}`;
-    await persistSyncFailure(supabase, requestId, attemptAt, errorMessage);
-    return { status: "failed", error: errorMessage };
-  }
-
-  if (!artist?.google_calendar_sync_enabled) {
-    const reason = "Google Calendar sync is disabled.";
-    await persistSyncSkipped(supabase, requestId, attemptAt, reason);
-    return { status: "skipped", error: reason };
-  }
-
-  if (!artist.calendar_id) {
-    const reason = "Google Calendar ID is not configured.";
-    await persistSyncSkipped(supabase, requestId, attemptAt, reason);
-    return { status: "skipped", error: reason };
-  }
-
-  const syncResult = await createGoogleCalendarEvent({
-    calendarId: artist.calendar_id,
-    requestId,
-    clientName: booking.name ?? "Client",
-    email: booking.email,
-    phone: booking.phone,
-    tattooIdea: booking.tattoo_idea,
-    startTimeIso: slot.start_time,
-    endTimeIso: slot.end_time,
-  });
-
-  if (syncResult.status === "synced") {
-    await supabase
-      .from("booking_request")
-      .update({
-        google_calendar_sync_status: "synced",
-        google_calendar_sync_error: null,
-        google_calendar_event_id: syncResult.eventId,
-        google_calendar_last_attempt_at: attemptAt,
-        google_calendar_synced_at: attemptAt,
-        google_calendar_event_origin: APP_CALENDAR_SOURCE,
-      })
-      .eq("request_id", requestId);
-
-    return { status: "synced", eventId: syncResult.eventId };
-  }
-
-  if (syncResult.status === "skipped") {
-    await persistSyncSkipped(supabase, requestId, attemptAt, syncResult.error);
-    return { status: "skipped", error: syncResult.error };
-  }
-
-  await persistSyncFailure(supabase, requestId, attemptAt, syncResult.error);
-  return { status: "failed", error: syncResult.error };
-}
-
-async function persistSyncSkipped(
-  supabase: SupabaseServerClient,
-  requestId: string,
-  attemptAt: string,
-  reason: string,
-) {
-  await supabase
-    .from("booking_request")
-    .update({
-      google_calendar_sync_status: "skipped",
-      google_calendar_sync_error: reason,
-      google_calendar_last_attempt_at: attemptAt,
-      google_calendar_synced_at: null,
-      google_calendar_event_id: null,
-      google_calendar_event_origin: APP_CALENDAR_SOURCE,
-    })
-    .eq("request_id", requestId);
-}
-
-async function persistSyncFailure(
-  supabase: SupabaseServerClient,
-  requestId: string,
-  attemptAt: string,
-  errorMessage: string,
-) {
-  await supabase
-    .from("booking_request")
-    .update({
-      google_calendar_sync_status: "failed",
-      google_calendar_sync_error: errorMessage,
-      google_calendar_last_attempt_at: attemptAt,
-      google_calendar_synced_at: null,
-      google_calendar_event_origin: APP_CALENDAR_SOURCE,
-    })
-    .eq("request_id", requestId);
 }

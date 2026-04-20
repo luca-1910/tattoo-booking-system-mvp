@@ -24,7 +24,7 @@ export const BOOKING_REQUEST_ALLOWED_TRANSITIONS: Record<
   BookingRequestStatus[]
 > = {
   pending: ["approved", "rejected", "expired", "cancelled"],
-  approved: ["completed", "cancelled"],
+  approved: ["completed", "cancelled", "expired"],
   rejected: [],
   completed: [],
   cancelled: [],

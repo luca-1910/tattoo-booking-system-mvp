@@ -6,26 +6,20 @@ import {
   Clock,
   CheckCircle,
   XCircle,
+  Ban,
   Calendar as CalendarIcon,
   Settings,
   LogOut,
-  BarChart3,
   AlertCircle,
+  LayoutGrid,
+  LayoutList,
 } from "lucide-react";
 import { StatsCard } from "./StatsCard";
 import { BookingCard } from "./BookingCard";
 import { Button } from "./ui/button";
-import {
-  BarChart,
-  Bar,
-  XAxis,
-  YAxis,
-  CartesianGrid,
-  Tooltip,
-  ResponsiveContainer,
-} from "recharts";
+import { TutorialModal } from "./TutorialModal";
 import { toast } from "sonner";
-import { useRequireAdmin } from "@/hooks/useRequireAdmin"; // ✅ guard hook
+import { useRequireArtistProfile } from "@/hooks/useRequireAdmin"; // ✅ guard hook
 import { supabaseBrowser } from "@/lib/supabaseBrowserClient";
 import {
   type BookingRequestStatus,
@@ -34,7 +28,7 @@ import {
   normalizeSlotStatus,
 } from "@/lib/domain";
 
-type FilterTab = "all" | BookingRequestStatus;
+type FilterTab = BookingRequestStatus;
 
 interface DashboardProps {
   onNavigate: (page: string) => void;
@@ -61,6 +55,9 @@ type BookingUI = {
 
   // needed for approve -> book slot
   requestedSlotId: string | null;
+
+  // raw ISO start_time of the requested slot (for expiration logic)
+  slotStartTime: string | null;
 };
 
 type BookingRequestRow = {
@@ -101,23 +98,16 @@ function formatTimeLabel(iso: string) {
   });
 }
 
-const chartData = [
-  { month: "Jan", hoursWorked: 120, hoursAvailable: 160 },
-  { month: "Feb", hoursWorked: 145, hoursAvailable: 160 },
-  { month: "Mar", hoursWorked: 130, hoursAvailable: 160 },
-  { month: "Apr", hoursWorked: 155, hoursAvailable: 160 },
-  { month: "May", hoursWorked: 140, hoursAvailable: 160 },
-  { month: "Jun", hoursWorked: 150, hoursAvailable: 160 },
-];
-
 export default function Dashboard({ onNavigate, onLogout }: DashboardProps) {
-  const checking = useRequireAdmin();
+  const checking = useRequireArtistProfile();
   const supabase = supabaseBrowser();
 
   const [bookings, setBookings] = useState<BookingUI[]>([]);
   const [loadingBookings, setLoadingBookings] = useState(true);
 
-  const [activeFilter, setActiveFilter] = useState<FilterTab>("all");
+  const [activeFilter, setActiveFilter] = useState<FilterTab>("pending");
+  const [viewMode, setViewMode] = useState<"grid" | "card">("grid");
+  const [showTutorial, setShowTutorial] = useState(false);
 
   // ─────────────────────────────────────────────────────────
   // Fetch booking requests + their slot date/time
@@ -185,12 +175,32 @@ export default function Dashboard({ onNavigate, onLogout }: DashboardProps) {
           requestedSlotId: r.requested_slot_id ?? null,
           paymentProofUrl: r.payment_proof_url ?? null,
           referenceImageUrl: r.reference_image_url ?? null,
+          slotStartTime: slot?.start_time ?? null,
         };
       });
 
+      // Auto-expire approved bookings whose appointment day has passed.
+      const startOfToday = new Date();
+      startOfToday.setHours(0, 0, 0, 0);
+      const toExpireIds = mapped
+        .filter((b) => b.status === "approved" && b.slotStartTime && new Date(b.slotStartTime) < startOfToday)
+        .map((b) => b.id);
+
+      if (toExpireIds.length > 0) {
+        const { error: expireError } = await supabase
+          .from("booking_request")
+          .update({ status: "expired" })
+          .in("request_id", toExpireIds);
+
+        if (!expireError) {
+          for (const b of mapped) {
+            if (toExpireIds.includes(b.id)) b.status = "expired";
+          }
+        }
+      }
+
       setBookings(mapped);
     } catch (e: any) {
-      console.error("FETCH BOOKINGS ERROR:", e);
       toast.error(e?.message || "Failed to load booking requests.");
       setBookings([]);
     } finally {
@@ -201,6 +211,10 @@ export default function Dashboard({ onNavigate, onLogout }: DashboardProps) {
   useEffect(() => {
     if (checking) return;
     fetchBookings();
+    if (localStorage.getItem("pending_tutorial") === "1") {
+      localStorage.removeItem("pending_tutorial");
+      setShowTutorial(true);
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [checking]);
 
@@ -208,7 +222,6 @@ export default function Dashboard({ onNavigate, onLogout }: DashboardProps) {
   // Filters + stats (same UI behavior)
   // ─────────────────────────────────────────────────────────
   const filteredBookings = useMemo(() => {
-    if (activeFilter === "all") return bookings;
     return bookings.filter((b) => b.status === activeFilter);
   }, [bookings, activeFilter]);
 
@@ -249,9 +262,11 @@ export default function Dashboard({ onNavigate, onLogout }: DashboardProps) {
       if (payload.calendarSyncStatus === "synced") {
         toast.success("Booking approved, slot booked, and synced to Google Calendar.");
       } else if (payload.calendarSyncStatus === "skipped") {
-        toast.success("Booking approved and slot booked. Calendar sync was skipped.");
+        const reason = payload.calendarSyncError ? ` Reason: ${payload.calendarSyncError}` : "";
+        toast.warning(`Booking approved and slot booked. Calendar sync skipped.${reason}`);
       } else {
-        toast.error("Booking approved and slot booked, but calendar sync failed (retry later).");
+        const reason = payload.calendarSyncError ? ` Error: ${payload.calendarSyncError}` : "";
+        toast.error(`Booking approved and slot booked, but calendar sync failed.${reason}`);
       }
 
       // Update local state to reflect approval without a full refetch
@@ -259,8 +274,31 @@ export default function Dashboard({ onNavigate, onLogout }: DashboardProps) {
         prev.map((b) => (b.id === id ? { ...b, status: "approved" } : b)),
       );
     } catch (e: any) {
-      console.error("APPROVE ERROR:", e);
       toast.error(e?.message || "Failed to approve booking.");
+    }
+  };
+
+  const handleCancel = async (id: any) => {
+    try {
+      const res = await fetch(`/api/admin/bookings/${id}/cancel`, { method: "POST" });
+      const payload = await res.json();
+      if (!res.ok) throw new Error(payload?.error || "Failed to cancel booking.");
+      toast.warning("Booking cancelled.");
+      setBookings((prev) => prev.map((b) => (b.id === id ? { ...b, status: "cancelled" } : b)));
+    } catch (e: any) {
+      toast.error(e?.message || "Failed to cancel booking.");
+    }
+  };
+
+  const handleDelete = async (id: any) => {
+    try {
+      const res = await fetch(`/api/admin/bookings/${id}/delete`, { method: "DELETE" });
+      const payload = await res.json();
+      if (!res.ok) throw new Error(payload?.error || "Failed to delete booking.");
+      setBookings((prev) => prev.filter((b) => b.id !== id));
+      toast.success("Booking deleted.");
+    } catch (e: any) {
+      toast.error(e?.message || "Failed to delete booking.");
     }
   };
 
@@ -280,7 +318,6 @@ export default function Dashboard({ onNavigate, onLogout }: DashboardProps) {
         prev.map((b) => (b.id === id ? { ...b, status: "rejected" } : b)),
       );
     } catch (e: any) {
-      console.error("REJECT ERROR:", e);
       toast.error(e?.message || "Failed to reject booking.");
     }
   };
@@ -301,16 +338,15 @@ export default function Dashboard({ onNavigate, onLogout }: DashboardProps) {
   if (checking) return null;
 
   const filterTabs = [
-    { id: "all", label: "All Bookings", count: bookings.length },
     { id: "pending", label: "Pending", count: stats.pending },
-    { id: "approved", label: "Confirmed", count: stats.approved },
-    { id: "completed", label: "Completed", count: stats.completed },
+    { id: "approved", label: "Approved", count: stats.approved },
     { id: "rejected", label: "Rejected", count: stats.rejected },
     { id: "cancelled", label: "Cancelled", count: stats.cancelled },
     { id: "expired", label: "Expired", count: stats.expired },
   ];
 
   return (
+    <>
     <div className="min-h-screen bg-[#0a0a0a] text-[#e5e5e5]">
       {/* Top Navigation */}
       <div className="border-b border-[rgba(255,255,255,0.1)] bg-[#1a1a1a] sticky top-0 z-50 shadow-lg shadow-black/20">
@@ -372,57 +408,75 @@ export default function Dashboard({ onNavigate, onLogout }: DashboardProps) {
             color="#ef4444"
           />
           <StatsCard
-            title="Completed"
-            value={stats.completed}
-            icon={<CheckCircle />}
-            color="#3b82f6"
+            title="Cancelled"
+            value={stats.cancelled}
+            icon={<Ban />}
+            color="#6b7280"
           />
         </div>
 
-        {/* Chart (unchanged) */}
-        <div className="bg-[#1a1a1a] rounded-lg p-4 sm:p-6 border border-[rgba(255,255,255,0.1)] mb-6 sm:mb-8 shadow-xl shadow-black/10">
-          <div className="flex items-center gap-2 mb-4 sm:mb-6">
-            <BarChart3 className="w-5 h-5 text-[#a32020]" />
-            <h2>Hours Worked vs Available</h2>
-          </div>
-          <ResponsiveContainer width="100%" height={250}>
-            <BarChart data={chartData}>
-              <CartesianGrid
-                strokeDasharray="3 3"
-                stroke="rgba(255,255,255,0.05)"
-              />
-              <XAxis dataKey="month" stroke="#a0a0a0" />
-              <YAxis stroke="#a0a0a0" />
-              <Tooltip
-                contentStyle={{
-                  backgroundColor: "#1a1a1a",
-                  border: "1px solid rgba(255,255,255,0.1)",
-                  borderRadius: "8px",
-                  color: "#e5e5e5",
-                }}
-              />
-              <Bar dataKey="hoursWorked" fill="#a32020" radius={[4, 4, 0, 0]} />
-              <Bar
-                dataKey="hoursAvailable"
-                fill="#2a2a2a"
-                radius={[4, 4, 0, 0]}
-              />
-            </BarChart>
-          </ResponsiveContainer>
-        </div>
+        {/* Upcoming Appointments */}
+        {(() => {
+          const upcoming = bookings
+            .filter((b) => b.status === "approved" && b.date !== "TBD")
+            .slice(0, 4);
+          return (
+            <div className="bg-[#1a1a1a] rounded-lg p-4 sm:p-6 border border-[rgba(255,255,255,0.1)] mb-6 sm:mb-8 shadow-xl shadow-black/10">
+              <div className="flex items-center gap-2 mb-4">
+                <CalendarIcon className="w-5 h-5 text-[#a32020]" />
+                <h2>Upcoming Appointments</h2>
+              </div>
+              {upcoming.length === 0 ? (
+                <p className="text-[#a0a0a0] text-sm">No upcoming approved appointments.</p>
+              ) : (
+                <div className="divide-y divide-[rgba(255,255,255,0.06)]">
+                  {upcoming.map((b) => (
+                    <div key={b.id} className="flex items-center justify-between py-3 first:pt-0 last:pb-0">
+                      <div>
+                        <p className="text-[#e5e5e5] font-medium">{b.clientName}</p>
+                        <p className="text-[#a0a0a0] text-sm line-clamp-1">{b.tattooIdea}</p>
+                      </div>
+                      <div className="text-right shrink-0 ml-4">
+                        <p className="text-[#e5e5e5] text-sm">{b.date}</p>
+                        <p className="text-[#a0a0a0] text-xs">{b.time}</p>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          );
+        })()}
 
         {/* Booking List */}
         <div>
           <div className="flex items-center justify-between mb-4 sm:mb-6">
             <h2>Booking Requests</h2>
-
-            <Button
-              variant="ghost"
-              onClick={fetchBookings}
-              className="text-[#e5e5e5] hover:text-[#a32020] hover:bg-[#a32020]/10"
-            >
-              {loadingBookings ? "Refreshing…" : "Refresh"}
-            </Button>
+            <div className="flex items-center gap-2">
+              <div className="flex rounded-lg border border-[rgba(255,255,255,0.1)] overflow-hidden">
+                <button
+                  onClick={() => setViewMode("grid")}
+                  className={`p-2 transition-colors ${viewMode === "grid" ? "bg-[#a32020]/20 text-[#a32020]" : "text-[#a0a0a0] hover:text-[#e5e5e5] hover:bg-[#1a1a1a]"}`}
+                  title="Grid view"
+                >
+                  <LayoutGrid className="w-4 h-4" />
+                </button>
+                <button
+                  onClick={() => setViewMode("card")}
+                  className={`p-2 transition-colors ${viewMode === "card" ? "bg-[#a32020]/20 text-[#a32020]" : "text-[#a0a0a0] hover:text-[#e5e5e5] hover:bg-[#1a1a1a]"}`}
+                  title="Card view"
+                >
+                  <LayoutList className="w-4 h-4" />
+                </button>
+              </div>
+              <Button
+                variant="ghost"
+                onClick={fetchBookings}
+                className="text-[#e5e5e5] hover:text-[#a32020] hover:bg-[#a32020]/10"
+              >
+                {loadingBookings ? "Refreshing…" : "Refresh"}
+              </Button>
+            </div>
           </div>
 
           <div className="bg-[#1a1a1a] rounded-lg p-2 sm:p-4 border border-[rgba(255,255,255,0.1)] mb-6 shadow-xl shadow-black/10">
@@ -457,7 +511,7 @@ export default function Dashboard({ onNavigate, onLogout }: DashboardProps) {
             </div>
           </div>
 
-          <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+          <div className={viewMode === "grid" ? "grid grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-3" : "grid grid-cols-1 lg:grid-cols-2 gap-4"}>
             {loadingBookings ? (
               <div className="col-span-full bg-[#1a1a1a] rounded-lg p-12 border border-[rgba(255,255,255,0.1)] text-center">
                 <p className="text-[#a0a0a0]">Loading booking requests…</p>
@@ -469,6 +523,9 @@ export default function Dashboard({ onNavigate, onLogout }: DashboardProps) {
                   booking={booking}
                   onApprove={handleApprove}
                   onReject={handleReject}
+                  onCancel={handleCancel}
+                  onDelete={handleDelete}
+                  compact={viewMode === "grid"}
                 />
               ))
             ) : (
@@ -476,7 +533,7 @@ export default function Dashboard({ onNavigate, onLogout }: DashboardProps) {
                 <AlertCircle className="w-12 h-12 mx-auto mb-4 text-[#a0a0a0]" />
                 <h3 className="mb-2 text-[#e5e5e5]">No bookings found</h3>
                 <p className="text-[#a0a0a0]">
-                  There are no {activeFilter !== "all" && activeFilter} bookings
+                  There are no {activeFilter} bookings
                   at the moment.
                 </p>
               </div>
@@ -485,5 +542,8 @@ export default function Dashboard({ onNavigate, onLogout }: DashboardProps) {
         </div>
       </div>
     </div>
+
+    <TutorialModal open={showTutorial} onClose={() => setShowTutorial(false)} />
+    </>
   );
 }

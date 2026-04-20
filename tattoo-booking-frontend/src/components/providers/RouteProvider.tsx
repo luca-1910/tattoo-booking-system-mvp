@@ -28,8 +28,7 @@ export function useRouteHandlers() {
     if (path) {
       router.push(path);
     } else {
-      console.warn(`⚠️ Unknown navigation target: "${target}"`);
-    }
+}
   };
 
   const onLogin = () => router.push("/dashboard");
