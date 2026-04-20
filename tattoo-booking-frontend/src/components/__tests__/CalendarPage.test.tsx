@@ -59,7 +59,19 @@ function setupFromMock(slots: object[] = []) {
         }),
       };
     }
-    return {};
+    // booking_request queries: .select().eq().eq().not() or .select().eq().not()
+    // All resolve with empty data so the slot list still loads correctly.
+    const emptyChain = {
+      select: vi.fn().mockReturnValue({
+        eq: vi.fn().mockReturnThis().mockReturnValue({
+          eq: vi.fn().mockReturnValue({
+            not: vi.fn().mockResolvedValue({ data: [], error: null }),
+          }),
+          not: vi.fn().mockResolvedValue({ data: [], error: null }),
+        }),
+      }),
+    };
+    return emptyChain;
   });
 }
 
@@ -186,7 +198,12 @@ describe("CalendarPage — Delete slot", () => {
       status: "available",
     };
     setupFromMock([existingSlot]);
-    mockDelete.mockResolvedValue({ error: null });
+
+    // deleteSlot calls the API route via fetch
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({ ok: true }),
+    }));
 
     renderCalendarPage();
 
