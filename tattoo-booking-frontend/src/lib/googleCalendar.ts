@@ -103,6 +103,123 @@ export async function createGoogleCalendarEvent(
   return { status: "synced", eventId };
 }
 
+/**
+ * Updates the start/end time of an existing Google Calendar event.
+ */
+export async function updateGoogleCalendarEvent(
+  calendarId: string,
+  eventId: string,
+  patch: { startTimeIso: string; endTimeIso: string },
+  opts?: { artistId?: string; supabase?: any },
+): Promise<{ status: "updated" | "failed"; error?: string }> {
+  const clientId = process.env.GOOGLE_CLIENT_ID;
+  const clientSecret = process.env.GOOGLE_CLIENT_SECRET;
+
+  if (!clientId || !clientSecret) {
+    return { status: "failed", error: "Google OAuth credentials are not configured." };
+  }
+
+  let accessToken: string;
+  try {
+    accessToken = await getValidAccessToken(opts?.artistId, opts?.supabase);
+  } catch (error) {
+    return { status: "failed", error: `Failed to get Google access token: ${getErrorMessage(error)}` };
+  }
+
+  const res = await fetch(
+    `https://www.googleapis.com/calendar/v3/calendars/${encodeURIComponent(calendarId)}/events/${encodeURIComponent(eventId)}`,
+    {
+      method: "PATCH",
+      headers: {
+        Authorization: `Bearer ${accessToken}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        start: { dateTime: patch.startTimeIso },
+        end: { dateTime: patch.endTimeIso },
+      }),
+    },
+  );
+
+  if (res.ok) return { status: "updated" };
+
+  const body = await res.json().catch(() => null);
+  return { status: "failed", error: `Google Calendar API error (${res.status}): ${JSON.stringify(body)}` };
+}
+
+/**
+ * Deletes a Google Calendar event.
+ * Returns "deleted" on success, "not_found" if already gone, "failed" on error.
+ */
+export async function deleteGoogleCalendarEvent(
+  calendarId: string,
+  eventId: string,
+  opts?: { artistId?: string; supabase?: any },
+): Promise<{ status: "deleted" | "not_found" | "failed"; error?: string }> {
+  const clientId = process.env.GOOGLE_CLIENT_ID;
+  const clientSecret = process.env.GOOGLE_CLIENT_SECRET;
+
+  if (!clientId || !clientSecret) {
+    return { status: "failed", error: "Google OAuth credentials are not configured." };
+  }
+
+  let accessToken: string;
+  try {
+    accessToken = await getValidAccessToken(opts?.artistId, opts?.supabase);
+  } catch (error) {
+    return { status: "failed", error: `Failed to get Google access token: ${getErrorMessage(error)}` };
+  }
+
+  const res = await fetch(
+    `https://www.googleapis.com/calendar/v3/calendars/${encodeURIComponent(calendarId)}/events/${encodeURIComponent(eventId)}`,
+    {
+      method: "DELETE",
+      headers: { Authorization: `Bearer ${accessToken}` },
+    },
+  );
+
+  if (res.status === 204) return { status: "deleted" };
+  if (res.status === 404 || res.status === 410) return { status: "not_found" };
+
+  const body = await res.json().catch(() => null);
+  return { status: "failed", error: `Google Calendar API error (${res.status}): ${JSON.stringify(body)}` };
+}
+
+/**
+ * Checks whether a Google Calendar event still exists.
+ * Returns "exists", "not_found", or "failed".
+ */
+export async function checkGoogleCalendarEvent(
+  calendarId: string,
+  eventId: string,
+  opts?: { artistId?: string; supabase?: any },
+): Promise<{ status: "exists" | "not_found" | "failed"; error?: string }> {
+  const clientId = process.env.GOOGLE_CLIENT_ID;
+  const clientSecret = process.env.GOOGLE_CLIENT_SECRET;
+
+  if (!clientId || !clientSecret) {
+    return { status: "failed", error: "Google OAuth credentials are not configured." };
+  }
+
+  let accessToken: string;
+  try {
+    accessToken = await getValidAccessToken(opts?.artistId, opts?.supabase);
+  } catch (error) {
+    return { status: "failed", error: `Failed to get Google access token: ${getErrorMessage(error)}` };
+  }
+
+  const res = await fetch(
+    `https://www.googleapis.com/calendar/v3/calendars/${encodeURIComponent(calendarId)}/events/${encodeURIComponent(eventId)}`,
+    { headers: { Authorization: `Bearer ${accessToken}` } },
+  );
+
+  if (res.ok) return { status: "exists" };
+  if (res.status === 404 || res.status === 410) return { status: "not_found" };
+
+  const body = await res.json().catch(() => null);
+  return { status: "failed", error: `Google Calendar API error (${res.status}): ${JSON.stringify(body)}` };
+}
+
 function getErrorMessage(error: unknown): string {
   if (error instanceof Error) return error.message;
   return "Unknown error";

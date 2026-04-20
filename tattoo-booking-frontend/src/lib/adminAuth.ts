@@ -3,8 +3,11 @@ import type { User } from "@supabase/supabase-js";
 export function isConfiguredAdmin(user: User | null): boolean {
   if (!user) return false;
 
-  const allowedEmail = process.env.ADMIN_EMAIL ?? process.env.NEXT_PUBLIC_ADMIN_EMAIL;
-  const allowedUid = process.env.ADMIN_UID ?? process.env.NEXT_PUBLIC_ADMIN_UID;
+  // Read server-only vars. The NEXT_PUBLIC_ variants are intentionally NOT
+  // used as a fallback here — we do not want admin credentials bundled into
+  // the client-side JavaScript bundle.
+  const allowedEmail = process.env.ADMIN_EMAIL;
+  const allowedUid = process.env.ADMIN_UID;
 
   const emailOk = allowedEmail ? user.email === allowedEmail : true;
 
