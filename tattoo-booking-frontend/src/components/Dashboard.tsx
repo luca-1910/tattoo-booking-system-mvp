@@ -6,6 +6,7 @@ import {
   Clock,
   CheckCircle,
   XCircle,
+  Ban,
   Calendar as CalendarIcon,
   Settings,
   LogOut,
@@ -16,6 +17,7 @@ import {
 import { StatsCard } from "./StatsCard";
 import { BookingCard } from "./BookingCard";
 import { Button } from "./ui/button";
+import { TutorialModal } from "./TutorialModal";
 import { toast } from "sonner";
 import { useRequireArtistProfile } from "@/hooks/useRequireAdmin"; // ✅ guard hook
 import { supabaseBrowser } from "@/lib/supabaseBrowserClient";
@@ -26,7 +28,7 @@ import {
   normalizeSlotStatus,
 } from "@/lib/domain";
 
-type FilterTab = "all" | BookingRequestStatus;
+type FilterTab = BookingRequestStatus;
 
 interface DashboardProps {
   onNavigate: (page: string) => void;
@@ -53,6 +55,9 @@ type BookingUI = {
 
   // needed for approve -> book slot
   requestedSlotId: string | null;
+
+  // raw ISO start_time of the requested slot (for expiration logic)
+  slotStartTime: string | null;
 };
 
 type BookingRequestRow = {
@@ -100,8 +105,9 @@ export default function Dashboard({ onNavigate, onLogout }: DashboardProps) {
   const [bookings, setBookings] = useState<BookingUI[]>([]);
   const [loadingBookings, setLoadingBookings] = useState(true);
 
-  const [activeFilter, setActiveFilter] = useState<FilterTab>("all");
+  const [activeFilter, setActiveFilter] = useState<FilterTab>("pending");
   const [viewMode, setViewMode] = useState<"grid" | "card">("grid");
+  const [showTutorial, setShowTutorial] = useState(false);
 
   // ─────────────────────────────────────────────────────────
   // Fetch booking requests + their slot date/time
@@ -169,8 +175,29 @@ export default function Dashboard({ onNavigate, onLogout }: DashboardProps) {
           requestedSlotId: r.requested_slot_id ?? null,
           paymentProofUrl: r.payment_proof_url ?? null,
           referenceImageUrl: r.reference_image_url ?? null,
+          slotStartTime: slot?.start_time ?? null,
         };
       });
+
+      // Auto-expire approved bookings whose appointment day has passed.
+      const startOfToday = new Date();
+      startOfToday.setHours(0, 0, 0, 0);
+      const toExpireIds = mapped
+        .filter((b) => b.status === "approved" && b.slotStartTime && new Date(b.slotStartTime) < startOfToday)
+        .map((b) => b.id);
+
+      if (toExpireIds.length > 0) {
+        const { error: expireError } = await supabase
+          .from("booking_request")
+          .update({ status: "expired" })
+          .in("request_id", toExpireIds);
+
+        if (!expireError) {
+          for (const b of mapped) {
+            if (toExpireIds.includes(b.id)) b.status = "expired";
+          }
+        }
+      }
 
       setBookings(mapped);
     } catch (e: any) {
@@ -184,6 +211,10 @@ export default function Dashboard({ onNavigate, onLogout }: DashboardProps) {
   useEffect(() => {
     if (checking) return;
     fetchBookings();
+    if (localStorage.getItem("pending_tutorial") === "1") {
+      localStorage.removeItem("pending_tutorial");
+      setShowTutorial(true);
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [checking]);
 
@@ -191,7 +222,6 @@ export default function Dashboard({ onNavigate, onLogout }: DashboardProps) {
   // Filters + stats (same UI behavior)
   // ─────────────────────────────────────────────────────────
   const filteredBookings = useMemo(() => {
-    if (activeFilter === "all") return bookings;
     return bookings.filter((b) => b.status === activeFilter);
   }, [bookings, activeFilter]);
 
@@ -248,6 +278,30 @@ export default function Dashboard({ onNavigate, onLogout }: DashboardProps) {
     }
   };
 
+  const handleCancel = async (id: any) => {
+    try {
+      const res = await fetch(`/api/admin/bookings/${id}/cancel`, { method: "POST" });
+      const payload = await res.json();
+      if (!res.ok) throw new Error(payload?.error || "Failed to cancel booking.");
+      toast.warning("Booking cancelled.");
+      setBookings((prev) => prev.map((b) => (b.id === id ? { ...b, status: "cancelled" } : b)));
+    } catch (e: any) {
+      toast.error(e?.message || "Failed to cancel booking.");
+    }
+  };
+
+  const handleDelete = async (id: any) => {
+    try {
+      const res = await fetch(`/api/admin/bookings/${id}/delete`, { method: "DELETE" });
+      const payload = await res.json();
+      if (!res.ok) throw new Error(payload?.error || "Failed to delete booking.");
+      setBookings((prev) => prev.filter((b) => b.id !== id));
+      toast.success("Booking deleted.");
+    } catch (e: any) {
+      toast.error(e?.message || "Failed to delete booking.");
+    }
+  };
+
   const handleReject = async (id: any) => {
     try {
       const res = await fetch(`/api/admin/bookings/${id}/reject`, {
@@ -284,16 +338,15 @@ export default function Dashboard({ onNavigate, onLogout }: DashboardProps) {
   if (checking) return null;
 
   const filterTabs = [
-    { id: "all", label: "All Bookings", count: bookings.length },
     { id: "pending", label: "Pending", count: stats.pending },
-    { id: "approved", label: "Confirmed", count: stats.approved },
-    { id: "completed", label: "Completed", count: stats.completed },
+    { id: "approved", label: "Approved", count: stats.approved },
     { id: "rejected", label: "Rejected", count: stats.rejected },
     { id: "cancelled", label: "Cancelled", count: stats.cancelled },
     { id: "expired", label: "Expired", count: stats.expired },
   ];
 
   return (
+    <>
     <div className="min-h-screen bg-[#0a0a0a] text-[#e5e5e5]">
       {/* Top Navigation */}
       <div className="border-b border-[rgba(255,255,255,0.1)] bg-[#1a1a1a] sticky top-0 z-50 shadow-lg shadow-black/20">
@@ -355,10 +408,10 @@ export default function Dashboard({ onNavigate, onLogout }: DashboardProps) {
             color="#ef4444"
           />
           <StatsCard
-            title="Completed"
-            value={stats.completed}
-            icon={<CheckCircle />}
-            color="#3b82f6"
+            title="Cancelled"
+            value={stats.cancelled}
+            icon={<Ban />}
+            color="#6b7280"
           />
         </div>
 
@@ -470,6 +523,8 @@ export default function Dashboard({ onNavigate, onLogout }: DashboardProps) {
                   booking={booking}
                   onApprove={handleApprove}
                   onReject={handleReject}
+                  onCancel={handleCancel}
+                  onDelete={handleDelete}
                   compact={viewMode === "grid"}
                 />
               ))
@@ -478,7 +533,7 @@ export default function Dashboard({ onNavigate, onLogout }: DashboardProps) {
                 <AlertCircle className="w-12 h-12 mx-auto mb-4 text-[#a0a0a0]" />
                 <h3 className="mb-2 text-[#e5e5e5]">No bookings found</h3>
                 <p className="text-[#a0a0a0]">
-                  There are no {activeFilter !== "all" && activeFilter} bookings
+                  There are no {activeFilter} bookings
                   at the moment.
                 </p>
               </div>
@@ -487,5 +542,8 @@ export default function Dashboard({ onNavigate, onLogout }: DashboardProps) {
         </div>
       </div>
     </div>
+
+    <TutorialModal open={showTutorial} onClose={() => setShowTutorial(false)} />
+    </>
   );
 }

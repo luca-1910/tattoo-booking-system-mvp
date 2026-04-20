@@ -3,14 +3,15 @@
 
 import { useEffect, useState } from "react";
 import { useSearchParams } from "next/navigation";
-import { User, Palette, Save, Calendar as CalendarIcon, MapPin, Share2, LayoutDashboard, LogOut, ChevronRight, ArrowLeft, CheckCircle2, XCircle } from "lucide-react";
+import { User, Palette, Save, Calendar as CalendarIcon, MapPin, Share2, LayoutDashboard, LogOut, ChevronRight, ArrowLeft, CheckCircle2, XCircle, BookOpen } from "lucide-react";
 import { useRequireAdmin } from "@/hooks/useRequireAdmin";
 import { supabaseBrowser } from "@/lib/supabaseBrowserClient";
 import { Button } from "./ui/button";
 import { Input } from "./ui/input";
 import { Label } from "./ui/label";
-import { Switch } from "./ui/switch";
 import { toast } from "sonner";
+import { ImageUploader } from "./ImageUploader";
+import { TutorialModal } from "./TutorialModal";
 
 interface SettingsPageProps {
   onNavigate: (page: string) => void;
@@ -54,6 +55,7 @@ export default function SettingsPage({ onNavigate, onLogout }: SettingsPageProps
   const [saving, setSaving] = useState(false);
   const [activeSection, setActiveSection] = useState("profile");
   const [mobileShowContent, setMobileShowContent] = useState(false);
+  const [showTutorial, setShowTutorial] = useState(false);
 
   // Onboarding state — shown when no artist row exists yet
   const [isNewArtist, setIsNewArtist] = useState(false);
@@ -67,6 +69,7 @@ export default function SettingsPage({ onNavigate, onLogout }: SettingsPageProps
     { id: "social", label: "Social & Links", icon: <Share2 className="w-4 h-4" /> },
     { id: "images", label: "Landing Images", icon: <Palette className="w-4 h-4" /> },
     { id: "calendar", label: "Calendar", icon: <CalendarIcon className="w-4 h-4" /> },
+    { id: "tutorial", label: "Tutorial", icon: <BookOpen className="w-4 h-4" /> },
   ];
 
   useEffect(() => {
@@ -110,7 +113,6 @@ export default function SettingsPage({ onNavigate, onLogout }: SettingsPageProps
         setIsGoogleConnected(Boolean(artist.google_refresh_token));
         setArtistName(artist.name ?? "");
         setCalendarId(artist.calendar_id ?? "");
-        setGoogleCalendarSyncEnabled(Boolean(artist.google_calendar_sync_enabled));
         setTagline(artist.tagline ?? "");
         setContactEmail(artist.contact_email ?? "");
         setPhone(artist.phone ?? "");
@@ -196,8 +198,8 @@ export default function SettingsPage({ onNavigate, onLogout }: SettingsPageProps
       });
       const payload = await res.json();
       if (!res.ok) throw new Error(payload?.error || "Failed to create profile.");
-      // Row created — reload so fetchData picks up the new row
-      window.location.reload();
+      localStorage.setItem("pending_tutorial", "1");
+      onNavigate("dashboard");
     } catch (e: any) {
       toast.error(e.message || "Failed to create profile.");
     } finally {
@@ -260,6 +262,7 @@ export default function SettingsPage({ onNavigate, onLogout }: SettingsPageProps
   }
 
   return (
+    <>
     <div className="min-h-screen bg-[#0a0a0a] text-[#e5e5e5]">
       {/* Top Navigation */}
       <div className="border-b border-[rgba(255,255,255,0.1)] bg-[#1a1a1a] sticky top-0 z-50 shadow-lg shadow-black/20">
@@ -385,14 +388,52 @@ export default function SettingsPage({ onNavigate, onLogout }: SettingsPageProps
 
               {activeSection === "images" && (
                 <Section icon={<Palette />} title="Landing Page Images">
-                  <Field label="Hero Background Image URL">
-                    <Input value={heroImageUrl} placeholder="https://…" onChange={(e) => setHeroImageUrl(e.target.value)} className={inputCls} />
+                  <Field
+                    label="Hero Background"
+                    hint="Wide banner shown at the top of the landing page. Drag to reposition, use the zoom slider to fit."
+                  >
+                    <ImageUploader
+                      value={heroImageUrl}
+                      onChange={setHeroImageUrl}
+                      storagePath={`hero/${artistId ?? "default"}`}
+                      aspectRatio={16 / 7}
+                      previewClassName="h-44 mt-2"
+                    />
                   </Field>
-                  {([0, 1, 2] as const).map((i) => (
-                    <Field key={i} label={`Portfolio Image ${i + 1} URL`}>
-                      <Input value={portfolioImages[i]} placeholder="https://…" onChange={(e) => updatePortfolioImage(i, e.target.value)} className={inputCls} />
-                    </Field>
-                  ))}
+
+                  <div className="border-t border-[rgba(255,255,255,0.06)] pt-4">
+                    <p className="text-sm text-[#a0a0a0] mb-4">Portfolio images — shown in the "Recent Work" grid (square crop).</p>
+                    <div className="grid grid-cols-3 gap-3">
+                      {([0, 1, 2] as const).map((i) => (
+                        <div key={i}>
+                          <p className="text-xs text-[#a0a0a0] mb-1">Image {i + 1}</p>
+                          <ImageUploader
+                            value={portfolioImages[i]}
+                            onChange={(url) => updatePortfolioImage(i, url)}
+                            storagePath={`portfolio/${artistId ?? "default"}`}
+                            aspectRatio={1}
+                            previewClassName="h-28"
+                          />
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                </Section>
+              )}
+
+              {activeSection === "tutorial" && (
+                <Section icon={<BookOpen />} title="Tutorial">
+                  <p className="text-[#a0a0a0] text-sm">
+                    Replay the onboarding walkthrough at any time to get a refresher on the key features.
+                  </p>
+                  <Button
+                    type="button"
+                    onClick={() => setShowTutorial(true)}
+                    className="mt-2 bg-[#a32020] hover:bg-[#8a1b1b] text-white"
+                  >
+                    <BookOpen className="w-4 h-4 mr-2" />
+                    Start Tutorial
+                  </Button>
                 </Section>
               )}
 
@@ -431,17 +472,6 @@ export default function SettingsPage({ onNavigate, onLogout }: SettingsPageProps
                     </Button>
                   </a>
 
-                  <Field
-                    label="Calendar ID (optional)"
-                    hint={`Which calendar to add events to. Leave blank to use your primary calendar.`}
-                  >
-                    <Input
-                      value={calendarId}
-                      placeholder="primary"
-                      onChange={(e) => setCalendarId(e.target.value)}
-                      className={inputCls}
-                    />
-                  </Field>
                 </Section>
               )}
 
@@ -460,6 +490,9 @@ export default function SettingsPage({ onNavigate, onLogout }: SettingsPageProps
         </div>
       </div>
     </div>
+
+    <TutorialModal open={showTutorial} onClose={() => setShowTutorial(false)} />
+    </>
   );
 }
 

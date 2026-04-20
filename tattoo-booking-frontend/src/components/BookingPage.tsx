@@ -109,8 +109,37 @@ export function BookingPage({ onNavigate }: BookingPageProps) {
   const [previewUrls, setPreviewUrls] = useState<string[]>([]);
   const [paymentPreview, setPaymentPreview] = useState<string>("");
 
+  // Inline validation errors for step 1 fields
+  const [step1Errors, setStep1Errors] = useState<{ name?: string; email?: string }>({});
+
   const handleInputChange = (field: string, value: any) => {
     setFormData((prev) => ({ ...prev, [field]: value }));
+    // Clear the corresponding inline error as soon as the user edits that field
+    if (field === "name" || field === "email") {
+      setStep1Errors((prev) => ({ ...prev, [field]: undefined }));
+    }
+  };
+
+  /** Validates step-1 fields and advances to step 2, or surfaces inline errors. */
+  const handleStep1Continue = () => {
+    const errors: { name?: string; email?: string } = {};
+
+    if (formData.name.length > 200) {
+      errors.name = "Name must be 200 characters or fewer.";
+    }
+
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    if (!emailRegex.test(formData.email)) {
+      errors.email = "Please enter a valid email address.";
+    }
+
+    if (Object.keys(errors).length > 0) {
+      setStep1Errors(errors);
+      return;
+    }
+
+    setStep1Errors({});
+    setStep(2);
   };
 
   const handleReferenceImagesUpload = (
@@ -244,26 +273,32 @@ export function BookingPage({ onNavigate }: BookingPageProps) {
         return;
       }
 
-      const { error: insErr } = await supabase.from("booking_request").insert({
-        name: formData.name,
-        email: formData.email,
-        phone: formData.phone || null,
-        dob: formData.dob || null,
-        tattoo_idea: formData.tattooIdea || null,
-        reference_image_url,
-        payment_proof_url,
-        requested_slot_id,
-        status: "pending",
+      const res = await fetch("/api/bookings/submit", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          name: formData.name,
+          email: formData.email,
+          phone: formData.phone || null,
+          dob: formData.dob || null,
+          tattoo_idea: formData.tattooIdea || null,
+          reference_image_url,
+          payment_proof_url,
+          slot_id: requested_slot_id,
+        }),
       });
 
-      if (insErr) throw insErr;
+      const data = await res.json();
+
+      if (!res.ok) {
+        throw new Error(data.error ?? "Something went wrong submitting your request.");
+      }
 
       toast.success(
-        "Booking request submitted successfully! You will receive a confirmation email shortly.",
+        "Booking request submitted! Check your email for a confirmation.",
       );
       setTimeout(() => onNavigate("home"), 1500);
     } catch (e: any) {
-      console.error("SUBMIT ERROR:",e);
       toast.error(
         e?.message || e?.error_description || "Something went wrong submitting your request.",
       );
@@ -319,7 +354,13 @@ export function BookingPage({ onNavigate }: BookingPageProps) {
                   onChange={(e) => handleInputChange("name", e.target.value)}
                   placeholder="Enter your full name"
                   className="mt-2 bg-[#0a0a0a] border-[rgba(255,255,255,0.1)] text-[#e5e5e5]"
+                  aria-describedby={step1Errors.name ? "name-error" : undefined}
                 />
+                {step1Errors.name && (
+                  <p id="name-error" className="mt-1 text-sm text-red-400">
+                    {step1Errors.name}
+                  </p>
+                )}
               </div>
 
               <div>
@@ -331,7 +372,13 @@ export function BookingPage({ onNavigate }: BookingPageProps) {
                   onChange={(e) => handleInputChange("email", e.target.value)}
                   placeholder="your.email@example.com"
                   className="mt-2 bg-[#0a0a0a] border-[rgba(255,255,255,0.1)] text-[#e5e5e5]"
+                  aria-describedby={step1Errors.email ? "email-error" : undefined}
                 />
+                {step1Errors.email && (
+                  <p id="email-error" className="mt-1 text-sm text-red-400">
+                    {step1Errors.email}
+                  </p>
+                )}
               </div>
 
               <div>
@@ -359,7 +406,7 @@ export function BookingPage({ onNavigate }: BookingPageProps) {
             </div>
 
             <Button
-              onClick={() => setStep(2)}
+              onClick={handleStep1Continue}
               disabled={
                 !formData.name ||
                 !formData.email ||

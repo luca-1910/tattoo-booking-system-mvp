@@ -8,8 +8,9 @@ import { type SlotStatus, normalizeSlotStatus } from "@/lib/domain";
 import { startOfDayLocal, getMonthMatrix, toIsoLocal } from "@/lib/calendarUtils";
 import { Button } from "./ui/button";
 import { Input } from "./ui/input";
+import { HoverCard, HoverCardContent, HoverCardTrigger } from "./ui/hover-card";
 import { toast } from "sonner";
-import { ChevronLeft, ChevronRight, RefreshCw, Trash2, Settings, LogOut, LayoutDashboard } from "lucide-react";
+import { ChevronLeft, ChevronRight, RefreshCw, Trash2, Settings, LogOut, LayoutDashboard, AlertTriangle, Ban, Pencil, Check, X, User as UserIcon, Mail, Phone, Clock as ClockIcon } from "lucide-react";
 
 type Slot = {
   slot_id: string;
@@ -18,6 +19,14 @@ type Slot = {
   status: SlotStatus | null;
   created_at?: string;
   updated_at?: string;
+};
+
+type BookingDetail = {
+  request_id: string;
+  name: string | null;
+  email: string | null;
+  phone: string | null;
+  tattoo_idea: string | null;
 };
 
 type ViewMode = "month" | "week";
@@ -37,7 +46,19 @@ export default function CalendarPage({ onNavigate, onLogout }: CalendarPageProps
 
   const [slots, setSlots] = useState<Slot[]>([]);
   const [saving, setSaving] = useState(false);
-  const [refreshing, setRefreshing] = useState(false);
+  const [syncingAll, setSyncingAll] = useState(false);
+  // slot_id -> error message for approved bookings whose calendar sync failed
+  const [failedSyncs, setFailedSyncs] = useState<Map<string, string>>(new Map());
+  // slot_id -> request_id for approved bookings (used for cancel)
+  const [bookingBySlot, setBookingBySlot] = useState<Map<string, string>>(new Map());
+  // slot_id -> rich booking details (used for hover popovers)
+  const [bookingDetailsBySlot, setBookingDetailsBySlot] = useState<Map<string, BookingDetail>>(new Map());
+  // inline edit state
+  const [editingSlotId, setEditingSlotId] = useState<string | null>(null);
+  const [editDate, setEditDate] = useState("");
+  const [editStartTime, setEditStartTime] = useState("");
+  const [editEndTime, setEditEndTime] = useState("");
+  const [editSaving, setEditSaving] = useState(false);
 
   // mobile tab: "calendar" | "availability"
   const [mobileTab, setMobileTab] = useState<"calendar" | "availability">("calendar");
@@ -58,26 +79,60 @@ export default function CalendarPage({ onNavigate, onLogout }: CalendarPageProps
   const [endTime, setEndTime] = useState<string>("11:00");
   const [notes, setNotes] = useState<string>("");
 
-  const fetchSlots = async (showSpinner = false) => {
-    if (showSpinner) setRefreshing(true);
+  const fetchSlots = async () => {
     try {
-      const { data: rows, error } = await supabase
-        .from("slot")
-        .select("*")
-        .order("start_time", { ascending: true });
+      const [slotsRes, failedRes, bookingRes] = await Promise.all([
+        supabase.from("slot").select("*").order("start_time", { ascending: true }),
+        supabase
+          .from("booking_request")
+          .select("requested_slot_id,google_calendar_sync_error")
+          .eq("status", "approved")
+          .eq("google_calendar_sync_status", "failed")
+          .not("requested_slot_id", "is", null),
+        supabase
+          .from("booking_request")
+          .select("request_id,requested_slot_id,name,email,phone,tattoo_idea")
+          .eq("status", "approved")
+          .not("requested_slot_id", "is", null),
+      ]);
 
-      if (error) toast.error(error.message);
+      if (slotsRes.error) toast.error(slotsRes.error.message);
       else {
         setSlots(
-          ((rows as Slot[]) ?? []).map((slot) => ({
+          ((slotsRes.data as Slot[]) ?? []).map((slot) => ({
             ...slot,
             status: normalizeSlotStatus(slot.status),
           })),
         );
-        if (showSpinner) toast.success("Calendar refreshed.");
       }
-    } finally {
-      if (showSpinner) setRefreshing(false);
+
+      if (!failedRes.error && failedRes.data) {
+        const map = new Map<string, string>();
+        for (const row of failedRes.data as { requested_slot_id: string; google_calendar_sync_error: string | null }[]) {
+          map.set(row.requested_slot_id, row.google_calendar_sync_error ?? "Calendar sync failed.");
+        }
+        setFailedSyncs(map);
+      }
+
+      if (!bookingRes.error && bookingRes.data) {
+        const idMap = new Map<string, string>();
+        const detailMap = new Map<string, BookingDetail>();
+        for (const row of bookingRes.data as (BookingDetail & { requested_slot_id: string })[]) {
+          idMap.set(row.requested_slot_id, row.request_id);
+          detailMap.set(row.requested_slot_id, {
+            request_id: row.request_id,
+            name: row.name,
+            email: row.email,
+            phone: row.phone,
+            tattoo_idea: row.tattoo_idea,
+          });
+        }
+        setBookingBySlot(idMap);
+        setBookingDetailsBySlot(detailMap);
+      }
+
+    } catch (e: any) {
+      toast.error(e?.message || "Failed to load calendar.");
     }
   };
 
@@ -94,6 +149,17 @@ export default function CalendarPage({ onNavigate, onLogout }: CalendarPageProps
     [cursor]
   );
 
+  const weekDays = useMemo(() => {
+    const start = new Date(cursor);
+    start.setHours(0, 0, 0, 0);
+    start.setDate(start.getDate() - start.getDay()); // back up to Sunday
+    return Array.from({ length: 7 }, (_, i) => {
+      const d = new Date(start);
+      d.setDate(start.getDate() + i);
+      return d;
+    });
+  }, [cursor]);
+
   const slotsByDay = useMemo(() => {
     const map = new Map<string, Slot[]>();
     for (const s of slots) {
@@ -108,6 +174,34 @@ export default function CalendarPage({ onNavigate, onLogout }: CalendarPageProps
   }, [slots]);
 
   const currentMonth = cursor.toLocaleString(undefined, { month: "long", year: "numeric" });
+  const weekRangeLabel = useMemo(() => {
+    const first = weekDays[0];
+    const last = weekDays[6];
+    const sameMonth = first.getMonth() === last.getMonth();
+    const sameYear = first.getFullYear() === last.getFullYear();
+    const firstStr = first.toLocaleDateString(undefined, { month: "short", day: "numeric" });
+    const lastStr = last.toLocaleDateString(undefined, sameMonth ? { day: "numeric" } : { month: "short", day: "numeric" });
+    return `${firstStr} – ${lastStr}, ${sameYear ? last.getFullYear() : `${first.getFullYear()}/${last.getFullYear()}`}`;
+  }, [weekDays]);
+
+  function navigatePrev() {
+    if (view === "month") {
+      setCursor(new Date(cursor.getFullYear(), cursor.getMonth() - 1, 1));
+    } else {
+      const d = new Date(cursor);
+      d.setDate(d.getDate() - 7);
+      setCursor(d);
+    }
+  }
+  function navigateNext() {
+    if (view === "month") {
+      setCursor(new Date(cursor.getFullYear(), cursor.getMonth() + 1, 1));
+    } else {
+      const d = new Date(cursor);
+      d.setDate(d.getDate() + 7);
+      setCursor(d);
+    }
+  }
 
   async function addSlot() {
     if (!selDate || !startTime || !endTime) {
@@ -153,32 +247,157 @@ export default function CalendarPage({ onNavigate, onLogout }: CalendarPageProps
 
   async function deleteSlot(slotId: string) {
     try {
-      const { error } = await supabase.from("slot").delete().eq("slot_id", slotId);
-      if (error) throw error;
+      const res = await fetch(`/api/admin/slots/${slotId}`, { method: "DELETE" });
+      const payload = await res.json();
+      if (!res.ok) throw new Error(payload?.error || "Failed to delete slot.");
       setSlots((prev) => prev.filter((s) => s.slot_id !== slotId));
+      setFailedSyncs((prev) => { const m = new Map(prev); m.delete(slotId); return m; });
       toast.success("Availability deleted.");
     } catch (e: any) {
       toast.error(e.message || "Failed to delete slot.");
     }
   }
 
+  const [deletingOutdated, setDeletingOutdated] = useState(false);
+
+  async function deleteOutdated() {
+    const now = new Date();
+    const past = slots.filter((s) => s.status === "available" && new Date(s.end_time) < now);
+    if (past.length === 0) { toast.info("No outdated slots to delete."); return; }
+    setDeletingOutdated(true);
+    let failed = 0;
+    const deleted: string[] = [];
+    await Promise.all(
+      past.map(async (s) => {
+        try {
+          const res = await fetch(`/api/admin/slots/${s.slot_id}`, { method: "DELETE" });
+          if (!res.ok) { failed++; return; }
+          deleted.push(s.slot_id);
+        } catch {
+          failed++;
+        }
+      }),
+    );
+    setSlots((prev) => prev.filter((s) => !deleted.includes(s.slot_id)));
+    setFailedSyncs((prev) => {
+      const m = new Map(prev);
+      deleted.forEach((id) => m.delete(id));
+      return m;
+    });
+    setDeletingOutdated(false);
+    if (failed === 0) toast.success(`Deleted ${deleted.length} outdated slot${deleted.length !== 1 ? "s" : ""}.`);
+    else toast.warning(`Deleted ${deleted.length}, failed to delete ${failed}.`);
+  }
+
   // status -> chip styles (matches your legend colors)
   function statusClasses(status?: string | null) {
     switch (status) {
       case "available":
-        return "bg-green-700/80 text-green-50 border border-green-600";
+        return "bg-emerald-500/15 text-emerald-300 border-l-2 border-emerald-400 hover:bg-emerald-500/25";
       case "booked":
-        return "bg-yellow-700/80 text-yellow-50 border border-yellow-600";
+        return "bg-amber-500/15 text-amber-300 border-l-2 border-amber-400 hover:bg-amber-500/25";
       case "blocked":
-        return "bg-red-800/80 text-red-50 border border-red-700";
+        return "bg-rose-500/15 text-rose-300 border-l-2 border-rose-400 hover:bg-rose-500/25";
       case "completed":
-        return "bg-blue-800/80 text-blue-50 border border-blue-700";
+        return "bg-sky-500/15 text-sky-300 border-l-2 border-sky-400 hover:bg-sky-500/25";
       case "cancelled":
-        return "bg-neutral-700/80 text-neutral-100 border border-neutral-600";
+        return "bg-neutral-500/15 text-neutral-300 border-l-2 border-neutral-400 hover:bg-neutral-500/25";
       default:
-        return "bg-neutral-800/80 text-neutral-200 border border-neutral-700";
+        return "bg-neutral-500/15 text-neutral-300 border-l-2 border-neutral-400 hover:bg-neutral-500/25";
     }
   }
+
+  function statusDotClasses(status?: string | null) {
+    switch (status) {
+      case "available": return "bg-emerald-400";
+      case "booked":    return "bg-amber-400";
+      case "blocked":   return "bg-rose-400";
+      case "completed": return "bg-sky-400";
+      case "cancelled": return "bg-neutral-400";
+      default:          return "bg-neutral-400";
+    }
+  }
+
+  async function cancelBooking(slotId: string) {
+    const requestId = bookingBySlot.get(slotId);
+    if (!requestId) { toast.error("No booking found for this slot."); return; }
+    try {
+      const res = await fetch(`/api/admin/bookings/${requestId}/cancel`, { method: "POST" });
+      const payload = await res.json();
+      if (!res.ok) throw new Error(payload?.error || "Failed to cancel booking.");
+      // Update slot status locally to available
+      setSlots((prev) => prev.map((s) => s.slot_id === slotId ? { ...s, status: "available" } : s));
+      setBookingBySlot((prev) => { const m = new Map(prev); m.delete(slotId); return m; });
+      setFailedSyncs((prev) => { const m = new Map(prev); m.delete(slotId); return m; });
+      toast.warning("Booking cancelled.");
+    } catch (e: any) {
+      toast.error(e.message || "Failed to cancel booking.");
+    }
+  }
+
+  function startEdit(s: Slot) {
+    const d = new Date(s.start_time);
+    const pad = (n: number) => String(n).padStart(2, "0");
+    setEditDate(`${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`);
+    setEditStartTime(`${pad(d.getHours())}:${pad(d.getMinutes())}`);
+    const de = new Date(s.end_time);
+    setEditEndTime(`${pad(de.getHours())}:${pad(de.getMinutes())}`);
+    setEditingSlotId(s.slot_id);
+  }
+
+  async function saveEdit(slotId: string) {
+    setEditSaving(true);
+    try {
+      const res = await fetch(`/api/admin/slots/${slotId}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ date: editDate, startTime: editStartTime, endTime: editEndTime }),
+      });
+      const payload = await res.json();
+      if (!res.ok) throw new Error(payload?.error || "Failed to reschedule.");
+      setSlots((prev) => prev.map((s) =>
+        s.slot_id === slotId ? { ...s, start_time: payload.startTime, end_time: payload.endTime } : s
+      ));
+      setEditingSlotId(null);
+      toast.success("Slot rescheduled.");
+    } catch (e: any) {
+      toast.error(e.message || "Failed to reschedule slot.");
+    } finally {
+      setEditSaving(false);
+    }
+  }
+
+  const handleSyncAll = async () => {
+    setSyncingAll(true);
+    try {
+      const res = await fetch("/api/admin/bookings/sync-calendar", { method: "POST" });
+      const payload = await res.json();
+      if (!res.ok) throw new Error(payload?.error || "Sync failed.");
+
+      const { synced, skipped, failed, gcalDeleted } = payload as {
+        synced: number; skipped: number; failed: number; gcalDeleted: number;
+      };
+
+      if (gcalDeleted > 0) {
+        toast.warning(`${gcalDeleted} appointment${gcalDeleted !== 1 ? "s" : ""} cancelled — deleted from Google Calendar.`);
+      }
+
+      if (synced === 0 && failed === 0) {
+        if (gcalDeleted === 0) toast.info("All bookings are already synced.");
+      } else if (failed === 0) {
+        toast.success(`Synced ${synced} booking${synced !== 1 ? "s" : ""} to Google Calendar.`);
+      } else {
+        toast.warning(`Synced ${synced}, failed ${failed}. Check calendar settings.`);
+      }
+
+      // Refresh so sync flags update
+      await fetchSlots();
+    } catch (e: any) {
+      toast.error(e?.message || "Calendar sync failed.");
+    } finally {
+      setSyncingAll(false);
+    }
+  };
 
   const handleLogout = async () => {
     const { error } = await supabase.auth.signOut();
@@ -261,27 +480,6 @@ export default function CalendarPage({ onNavigate, onLogout }: CalendarPageProps
 
       {/* Page content — fills remaining viewport height */}
       <div className="flex-1 min-h-0 flex flex-col p-3 lg:p-4 gap-3 max-w-[1400px] w-full mx-auto">
-        {/* Desktop header (hidden on mobile — tabs replace it) */}
-        <div className="shrink-0 hidden lg:flex items-center justify-between">
-          <h1 className="text-xl">Calendar</h1>
-          <div className="flex gap-2">
-            <Button
-              variant={view === "week" ? "secondary" : "default"}
-              className={view === "week" ? "bg-neutral-800" : "bg-[#a32020] hover:bg-[#8a1b1b]"}
-              onClick={() => setView("week")}
-            >
-              Week
-            </Button>
-            <Button
-              variant={view === "month" ? "secondary" : "default"}
-              className={view === "month" ? "bg-[#a32020] hover:bg-[#8a1b1b]" : "bg-neutral-800"}
-              onClick={() => setView("month")}
-            >
-              Month
-            </Button>
-          </div>
-        </div>
-
         {/* Main panels — side by side on desktop, tab-switched on mobile */}
         <div className="flex-1 min-h-0 grid grid-cols-1 lg:grid-cols-[1fr_320px] gap-4">
 
@@ -290,67 +488,169 @@ export default function CalendarPage({ onNavigate, onLogout }: CalendarPageProps
             mobileTab !== "calendar" ? "hidden lg:flex" : "flex"
           }`}>
             {/* Month nav */}
-            <div className="shrink-0 flex items-center justify-between mb-2">
-              <div className="font-medium">{currentMonth}</div>
-              <div className="flex gap-1">
-                <Button
-                  size="icon"
-                  variant="ghost"
-                  onClick={() => fetchSlots(true)}
-                  disabled={refreshing}
-                  title="Refresh calendar"
-                  className="text-neutral-400 hover:text-[#e5e5e5]"
-                >
-                  <RefreshCw className={`w-4 h-4 ${refreshing ? "animate-spin" : ""}`} />
-                </Button>
-                <Button
-                  size="icon"
-                  variant="ghost"
-                  onClick={() => setCursor(new Date(cursor.getFullYear(), cursor.getMonth() - 1, 1))}
-                >
-                  <ChevronLeft className="w-4 h-4" />
-                </Button>
-                <Button
-                  size="icon"
-                  variant="ghost"
-                  onClick={() => setCursor(new Date(cursor.getFullYear(), cursor.getMonth() + 1, 1))}
-                >
-                  <ChevronRight className="w-4 h-4" />
-                </Button>
+            <div className="shrink-0 flex items-center justify-between mb-2 gap-2 flex-wrap">
+              <div className="font-medium">{view === "month" ? currentMonth : weekRangeLabel}</div>
+              <div className="flex items-center gap-2">
+                <div className="hidden lg:inline-flex rounded-md border border-white/10 bg-[#0f0f0f] p-0.5">
+                  <button
+                    onClick={() => setView("week")}
+                    className={`px-2.5 py-1 text-xs font-medium rounded-sm transition-colors ${
+                      view === "week" ? "bg-[#a32020] text-white" : "text-neutral-400 hover:text-white"
+                    }`}
+                  >
+                    Week
+                  </button>
+                  <button
+                    onClick={() => setView("month")}
+                    className={`px-2.5 py-1 text-xs font-medium rounded-sm transition-colors ${
+                      view === "month" ? "bg-[#a32020] text-white" : "text-neutral-400 hover:text-white"
+                    }`}
+                  >
+                    Month
+                  </button>
+                </div>
+                <div className="flex gap-1">
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    onClick={handleSyncAll}
+                    disabled={syncingAll}
+                    title="Sync approved bookings to Google Calendar"
+                    className="h-8 px-2 text-xs text-neutral-400 hover:text-[#e5e5e5]"
+                  >
+                    <RefreshCw className={`w-3.5 h-3.5 mr-1.5${syncingAll ? " animate-spin" : ""}`} />
+                    {syncingAll ? "Syncing…" : "Sync"}
+                  </Button>
+                  <Button size="icon" variant="ghost" onClick={navigatePrev}>
+                    <ChevronLeft className="w-4 h-4" />
+                  </Button>
+                  <Button size="icon" variant="ghost" onClick={navigateNext}>
+                    <ChevronRight className="w-4 h-4" />
+                  </Button>
+                </div>
               </div>
             </div>
 
             {/* Day labels */}
-            <div className="shrink-0 grid grid-cols-7 text-center text-xs text-neutral-400 mb-1">
+            <div className="shrink-0 grid grid-cols-7 text-center text-[11px] uppercase tracking-wider text-neutral-500 mb-1.5">
               {DAY_LABELS.map((d) => (
-                <div key={d} className="py-1">{d}</div>
+                <div key={d} className="py-1.5 font-medium">{d}</div>
               ))}
             </div>
 
-            {/* Month grid — expands to fill panel */}
-            <div className="flex-1 min-h-0 grid grid-cols-7 grid-rows-6 gap-1">
-              {monthMatrix.flat().map((day, idx) => {
-                const isThisMonth = day.getMonth() === cursor.getMonth();
+            {/* Day cells grid — month (6×7) or week (1×7) */}
+            <div className={`flex-1 min-h-0 grid grid-cols-7 gap-1.5 ${view === "month" ? "grid-rows-6" : "grid-rows-1"}`}>
+              {(view === "month" ? monthMatrix.flat() : weekDays).map((day, idx) => {
+                const isThisMonth = view === "week" ? true : day.getMonth() === cursor.getMonth();
                 const key = startOfDayLocal(day).toDateString();
                 const items = slotsByDay.get(key) || [];
+                const hasSyncError = items.some((s) => failedSyncs.has(s.slot_id));
+                const isToday = startOfDayLocal(day).getTime() === startOfDayLocal(new Date()).getTime();
                 return (
                   <div
                     key={`${key}-${idx}`}
-                    className={`rounded-md p-1 lg:p-1.5 min-h-0 overflow-hidden border ${
-                      isThisMonth ? "border-white/10" : "border-white/5 opacity-50"
-                    } bg-black/30 flex flex-col`}
+                    className={`group rounded-lg p-1.5 lg:p-2 min-h-0 overflow-hidden border transition-colors ${
+                      hasSyncError
+                        ? "border-orange-500/40 bg-orange-950/10"
+                        : isToday
+                        ? "border-[#a32020]/60 bg-[#a32020]/5"
+                        : isThisMonth
+                        ? "border-white/[0.07] bg-white/[0.02] hover:bg-white/[0.04]"
+                        : "border-white/[0.04] bg-black/20 opacity-40"
+                    } flex flex-col`}
                   >
-                    <div className="text-[11px] text-neutral-400 leading-none mb-1 shrink-0">{day.getDate()}</div>
-                    <div className="flex-1 min-h-0 overflow-y-auto space-y-0.5 pr-0.5">
-                      {items.map((s) => (
-                        <div
-                          key={s.slot_id}
-                          className={`text-[10px] px-1 lg:px-1.5 py-0.5 rounded leading-tight ${statusClasses(s.status)}`}
-                          title={`${new Date(s.start_time).toLocaleTimeString([], {hour: '2-digit', minute: '2-digit'})} – ${new Date(s.end_time).toLocaleTimeString([], {hour: '2-digit', minute: '2-digit'})}`}
-                        >
-                          {new Date(s.start_time).toLocaleTimeString([], {hour: '2-digit', minute: '2-digit'})}
-                        </div>
-                      ))}
+                    <div className="text-[11px] leading-none mb-1.5 shrink-0 flex items-center justify-between">
+                      <span className={`font-medium ${isToday ? "text-[#a32020]" : isThisMonth ? "text-neutral-300" : "text-neutral-500"}`}>
+                        {view === "week" ? day.toLocaleDateString(undefined, { weekday: "short", day: "numeric" }) : day.getDate()}
+                      </span>
+                      {hasSyncError && (
+                        <span className="w-1.5 h-1.5 rounded-full bg-orange-400" title="Calendar sync failed" />
+                      )}
+                    </div>
+                    <div className="flex-1 min-h-0 overflow-y-auto space-y-1 pr-0.5">
+                      {items.map((s) => {
+                        const detail = bookingDetailsBySlot.get(s.slot_id);
+                        const syncErr = failedSyncs.get(s.slot_id);
+                        const startLabel = new Date(s.start_time).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+                        const endLabel = new Date(s.end_time).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+                        return (
+                          <HoverCard key={s.slot_id} openDelay={120} closeDelay={80}>
+                            <HoverCardTrigger asChild>
+                              <div
+                                className={`text-[10px] px-1.5 py-1 rounded-sm leading-tight cursor-pointer transition-colors font-medium ${statusClasses(s.status)}`}
+                              >
+                                {startLabel}
+                              </div>
+                            </HoverCardTrigger>
+                            <HoverCardContent
+                              side="top"
+                              align="start"
+                              className="w-72 bg-[#0f0f0f] border border-white/10 text-[#e5e5e5] p-0 overflow-hidden shadow-2xl shadow-black/50"
+                            >
+                              {/* Header */}
+                              <div className="flex items-center gap-2 px-3 py-2.5 border-b border-white/10 bg-white/[0.02]">
+                                <span className={`w-2 h-2 rounded-full ${statusDotClasses(s.status)}`} />
+                                <span className="text-xs font-medium capitalize">{s.status ?? "unknown"}</span>
+                                {syncErr && (
+                                  <span className="ml-auto flex items-center gap-1 text-[10px] text-orange-400">
+                                    <AlertTriangle className="w-3 h-3" /> sync failed
+                                  </span>
+                                )}
+                              </div>
+
+                              {/* Time */}
+                              <div className="px-3 py-2.5 border-b border-white/10 flex items-center gap-2 text-sm">
+                                <ClockIcon className="w-3.5 h-3.5 text-neutral-400" />
+                                <span className="text-neutral-200">{startLabel} — {endLabel}</span>
+                                <span className="text-neutral-500 text-xs ml-auto">
+                                  {new Date(s.start_time).toLocaleDateString([], { weekday: "short", month: "short", day: "numeric" })}
+                                </span>
+                              </div>
+
+                              {/* Booking details if booked */}
+                              {detail ? (
+                                <div className="px-3 py-2.5 space-y-1.5">
+                                  <div className="flex items-center gap-2 text-sm">
+                                    <UserIcon className="w-3.5 h-3.5 text-neutral-400 shrink-0" />
+                                    <span className="text-neutral-100 font-medium truncate">{detail.name ?? "Unknown"}</span>
+                                  </div>
+                                  {detail.email && (
+                                    <div className="flex items-center gap-2 text-xs">
+                                      <Mail className="w-3 h-3 text-neutral-500 shrink-0" />
+                                      <span className="text-neutral-400 truncate">{detail.email}</span>
+                                    </div>
+                                  )}
+                                  {detail.phone && (
+                                    <div className="flex items-center gap-2 text-xs">
+                                      <Phone className="w-3 h-3 text-neutral-500 shrink-0" />
+                                      <span className="text-neutral-400">{detail.phone}</span>
+                                    </div>
+                                  )}
+                                  {detail.tattoo_idea && (
+                                    <div className="pt-1.5 mt-1.5 border-t border-white/5">
+                                      <p className="text-[10px] uppercase tracking-wider text-neutral-500 mb-0.5">Tattoo idea</p>
+                                      <p className="text-xs text-neutral-300 line-clamp-3">{detail.tattoo_idea}</p>
+                                    </div>
+                                  )}
+                                  {syncErr && (
+                                    <div className="pt-1.5 mt-1.5 border-t border-white/5">
+                                      <p className="text-[10px] text-orange-400 leading-snug">{syncErr}</p>
+                                    </div>
+                                  )}
+                                </div>
+                              ) : s.status === "available" ? (
+                                <div className="px-3 py-2.5 text-xs text-neutral-500">
+                                  Open for booking
+                                </div>
+                              ) : (
+                                <div className="px-3 py-2.5 text-xs text-neutral-500 capitalize">
+                                  {s.status ?? "No details"}
+                                </div>
+                              )}
+                            </HoverCardContent>
+                          </HoverCard>
+                        );
+                      })}
                     </div>
                   </div>
                 );
@@ -358,19 +658,23 @@ export default function CalendarPage({ onNavigate, onLogout }: CalendarPageProps
             </div>
 
             {/* Legend */}
-            <div className="shrink-0 mt-2 flex flex-wrap gap-x-3 gap-y-1 text-xs">
+            <div className="shrink-0 mt-3 pt-3 border-t border-white/5 flex flex-wrap gap-x-4 gap-y-1.5 text-xs">
               {[
-                ["Available", "bg-green-700/80 border-green-600"],
-                ["Booked", "bg-yellow-700/80 border-yellow-600"],
-                ["Blocked", "bg-red-800/80 border-red-700"],
-                ["Completed", "bg-blue-800/80 border-blue-700"],
-                ["Cancelled", "bg-neutral-700/80 border-neutral-600"],
+                ["Available", "bg-emerald-400"],
+                ["Booked", "bg-amber-400"],
+                ["Blocked", "bg-rose-400"],
+                ["Completed", "bg-sky-400"],
+                ["Cancelled", "bg-neutral-400"],
               ].map(([label, cls]) => (
                 <div key={label} className="flex items-center gap-1.5">
-                  <span className={`inline-block w-2.5 h-2.5 rounded border ${cls}`} />
-                  <span className="text-neutral-400">{label}</span>
+                  <span className={`inline-block w-2 h-2 rounded-full ${cls}`} />
+                  <span className="text-neutral-500">{label}</span>
                 </div>
               ))}
+              <div className="flex items-center gap-1.5">
+                <span className="inline-block w-2 h-2 rounded-full bg-orange-400 ring-1 ring-orange-400/30" />
+                <span className="text-neutral-500">Sync failed</span>
+              </div>
             </div>
           </div>
 
@@ -415,38 +719,135 @@ export default function CalendarPage({ onNavigate, onLogout }: CalendarPageProps
             </div>
 
             <div className="mt-4 flex flex-col min-h-0 flex-1">
-              <h3 className="shrink-0 text-xs text-neutral-400 mb-2">Scheduled Availability</h3>
-              <div className="flex-1 min-h-0 overflow-y-auto space-y-1.5 pr-1">
-                {slots.length === 0 && <p className="text-neutral-500 text-sm">No availability added yet.</p>}
-                {slots
-                  .slice()
-                  .sort((a, b) => +new Date(a.start_time) - +new Date(b.start_time))
-                  .map((s) => (
-                    <div
-                      key={s.slot_id}
-                      className="border border-white/10 rounded-md px-3 py-2 flex items-center justify-between"
+              <div className="shrink-0 flex items-center justify-between mb-2">
+                <h3 className="text-xs text-neutral-400">Scheduled Availability</h3>
+                {(() => {
+                  const outdatedCount = slots.filter((s) => s.status === "available" && new Date(s.end_time) < new Date()).length;
+                  return outdatedCount > 0 ? (
+                    <button
+                      onClick={deleteOutdated}
+                      disabled={deletingOutdated}
+                      className="text-[10px] text-neutral-500 hover:text-red-400 disabled:opacity-50 transition-colors"
+                      title={`Delete ${outdatedCount} past slot${outdatedCount !== 1 ? "s" : ""}`}
                     >
-                      <div className="text-xs">
-                        <div className="font-medium">
-                          {new Date(s.start_time).toLocaleDateString([], { weekday: "short", month: "short", day: "numeric" })}
-                        </div>
-                        <div className="text-neutral-400">
-                          {new Date(s.start_time).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })} —{" "}
-                          {new Date(s.end_time).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
-                        </div>
-                        {s.status && <div className="text-[10px] mt-0.5 capitalize text-neutral-500">{s.status}</div>}
-                      </div>
-                      <Button
-                        size="icon"
-                        variant="ghost"
-                        className="w-7 h-7 text-neutral-400 hover:text-red-400 shrink-0"
-                        onClick={() => deleteSlot(s.slot_id)}
-                        title="Delete slot"
+                      {deletingOutdated ? "Deleting…" : `Delete outdated (${outdatedCount})`}
+                    </button>
+                  ) : null;
+                })()}
+              </div>
+              <div className="flex-1 min-h-0 overflow-y-auto space-y-1.5 pr-1">
+                {(() => {
+                  const availableSlots = slots.filter((s) => s.status === "available");
+                  if (availableSlots.length === 0) {
+                    return <p className="text-neutral-500 text-sm">No availability added yet.</p>;
+                  }
+                  return null;
+                })()}
+                {slots
+                  .filter((s) => s.status === "available")
+                  .sort((a, b) => +new Date(a.start_time) - +new Date(b.start_time))
+                  .map((s) => {
+                    const syncError = failedSyncs.get(s.slot_id);
+                    const isBooked = s.status === "booked";
+                    const isEditing = editingSlotId === s.slot_id;
+                    return (
+                      <div
+                        key={s.slot_id}
+                        className={`border rounded-md px-3 py-2 flex flex-col gap-2 ${
+                          syncError ? "border-orange-500/50 bg-orange-950/20" : "border-white/10"
+                        }`}
                       >
-                        <Trash2 className="w-3.5 h-3.5" />
-                      </Button>
-                    </div>
-                  ))}
+                        {/* Slot info row */}
+                        <div className="flex items-start justify-between gap-2">
+                          <div className="text-xs min-w-0">
+                            <div className="font-medium">
+                              {new Date(s.start_time).toLocaleDateString([], { weekday: "short", month: "short", day: "numeric" })}
+                            </div>
+                            <div className="text-neutral-400">
+                              {new Date(s.start_time).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })} —{" "}
+                              {new Date(s.end_time).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
+                            </div>
+                            {s.status && <div className="text-[10px] mt-0.5 capitalize text-neutral-500">{s.status}</div>}
+                            {syncError && (
+                              <div className="flex items-start gap-1 mt-1">
+                                <AlertTriangle className="w-3 h-3 text-orange-400 shrink-0 mt-px" />
+                                <span className="text-[10px] text-orange-400 leading-tight break-all">{syncError}</span>
+                              </div>
+                            )}
+                          </div>
+
+                          {/* Actions */}
+                          {isBooked ? (
+                            <div className="flex gap-1 shrink-0">
+                              <Button
+                                size="icon"
+                                variant="ghost"
+                                className="w-7 h-7 text-neutral-400 hover:text-blue-400"
+                                onClick={() => isEditing ? setEditingSlotId(null) : startEdit(s)}
+                                title={isEditing ? "Cancel edit" : "Reschedule"}
+                              >
+                                {isEditing ? <X className="w-3.5 h-3.5" /> : <Pencil className="w-3.5 h-3.5" />}
+                              </Button>
+                              <Button
+                                size="icon"
+                                variant="ghost"
+                                className="w-7 h-7 text-neutral-400 hover:text-orange-400"
+                                onClick={() => cancelBooking(s.slot_id)}
+                                title="Cancel booking"
+                              >
+                                <Ban className="w-3.5 h-3.5" />
+                              </Button>
+                            </div>
+                          ) : (
+                            <Button
+                              size="icon"
+                              variant="ghost"
+                              className="w-7 h-7 text-neutral-400 hover:text-red-400 shrink-0"
+                              onClick={() => deleteSlot(s.slot_id)}
+                              title="Delete slot"
+                            >
+                              <Trash2 className="w-3.5 h-3.5" />
+                            </Button>
+                          )}
+                        </div>
+
+                        {/* Inline edit form */}
+                        {isEditing && (
+                          <div className="space-y-1.5 pt-1 border-t border-white/10">
+                            <Input
+                              type="date"
+                              value={editDate}
+                              onChange={(e) => setEditDate(e.target.value)}
+                              className="h-7 text-xs"
+                            />
+                            <div className="grid grid-cols-2 gap-1.5">
+                              <Input
+                                type="time"
+                                value={editStartTime}
+                                onChange={(e) => setEditStartTime(e.target.value)}
+                                className="h-7 text-xs"
+                              />
+                              <Input
+                                type="time"
+                                value={editEndTime}
+                                onChange={(e) => setEditEndTime(e.target.value)}
+                                className="h-7 text-xs"
+                              />
+                            </div>
+                            <Button
+                              size="sm"
+                              disabled={editSaving}
+                              onClick={() => saveEdit(s.slot_id)}
+                              className="w-full h-7 text-xs bg-[#a32020] hover:bg-[#8a1b1b]"
+                            >
+                              <Check className="w-3 h-3 mr-1" />
+                              {editSaving ? "Saving…" : "Save"}
+                            </Button>
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })}
               </div>
             </div>
           </aside>
